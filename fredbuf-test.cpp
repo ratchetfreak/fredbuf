@@ -1,11 +1,11 @@
 #include <cassert>
 
-#include <format>
-#include <source_location>
+//#include <format>
+//#include <source_location>
 
 #include "fredbuf.cpp"
 
-void assume_buffer_snapshots(const PieceTree::Tree* tree, std::string_view expected, PieceTree::CharOffset offset, std::source_location locus)
+void assume_buffer_snapshots(const PieceTree::Tree* tree, std::string_view expected, PieceTree::CharOffset offset)
 {
     // Owning snapshot.
     {
@@ -20,8 +20,13 @@ void assume_buffer_snapshots(const PieceTree::Tree* tree, std::string_view expec
 
         if (expected != buf)
         {
-            auto s = std::format("owning snapshot buffer string '{}' did not match expected value of '{}'. Line({})", buf, expected, locus.line());
-            fprintf(stderr, "%s\n", s.c_str());
+            size_t slen = snprintf(NULL, 0, "owning snapshot buffer string '%s' did not match expected value of '%.*s'. Line()", buf.c_str(),(int) expected.size(), expected.data());
+            std::string s ;
+            s.resize(slen);
+            slen = snprintf(s.data(), s.size(), "owning snapshot buffer string '%s' did not match expected value of '%.*s'. Line()", buf.c_str(),(int) expected.size(), expected.data());
+            
+            //auto s = std::format("owning snapshot buffer string '{}' did not match expected value of '{}'. Line({})", buf, expected, locus.line());
+            fprintf(stderr, "%.*s\n", (int)s.size(), s.c_str());
             assert(false);
         }
     }
@@ -38,14 +43,19 @@ void assume_buffer_snapshots(const PieceTree::Tree* tree, std::string_view expec
 
         if (expected != buf)
         {
-            auto s = std::format("reference snapshot buffer string '{}' did not match expected value of '{}'. Line({})", buf, expected, locus.line());
+            //auto s = std::format("reference snapshot buffer string '{}' did not match expected value of '{}'. Line({})", buf, expected, locus.line());
+            size_t slen = snprintf(NULL, 0, "reference snapshot buffer string '%s' did not match expected value of '%.*s'. Line()", buf.c_str(),(int) expected.size(), expected.data());
+            std::string s ;
+            s.resize(slen);
+            slen = snprintf(s.data(), s.size(), "reference snapshot buffer string '%s' did not match expected value of '%.*s'. Line()", buf.c_str(),(int) expected.size(), expected.data());
+            
             fprintf(stderr, "%s\n", s.c_str());
             assert(false);
         }
     }
 }
 
-void assume_reverse_buffer(const PieceTree::Tree* tree, std::string_view forward_buf, PieceTree::CharOffset offset, std::source_location locus)
+void assume_reverse_buffer(const PieceTree::Tree* tree, std::string_view forward_buf, PieceTree::CharOffset offset)
 {
     PieceTree::ReverseTreeWalker walker{ tree, offset };
     std::string buf;
@@ -61,13 +71,16 @@ void assume_reverse_buffer(const PieceTree::Tree* tree, std::string_view forward
     const bool result = std::equal(rfirst, rlast, begin(buf), end(buf));
     if (not result)
     {
-        auto s = std::format("Reversed buffer '{}' is not equal to forward buffer '{}'.  Line({})", buf, forward_buf, locus.line());
+        size_t slen = snprintf(NULL, 0, "Reversed buffer '%s' is not equal to forward buffer '%.*s'.  Line({})", buf.c_str(), (int)forward_buf.size(), forward_buf.data() );
+         std::string s ;
+            s.resize(slen);
+            slen = snprintf(s.data(), s.size(),"Reversed buffer '%s' is not equal to forward buffer '%.*s'.  Line({})", buf.c_str(), (int)forward_buf.size(), forward_buf.data());
         fprintf(stderr, "%s\n", s.c_str());
         assert(false);
     }
 }
 
-void assume_buffer(const PieceTree::Tree* tree, std::string_view expected, std::source_location locus = std::source_location::current())
+void assume_buffer(const PieceTree::Tree* tree, std::string_view expected)
 {
     constexpr auto start = PieceTree::CharOffset{ 0 };
     PieceTree::TreeWalker walker{ tree, start };
@@ -80,12 +93,16 @@ void assume_buffer(const PieceTree::Tree* tree, std::string_view expected, std::
 
     if (expected != buf)
     {
-        auto s = std::format("buffer string '{}' did not match expected value of '{}'. Line({})", buf, expected, locus.line());
+        size_t slen = snprintf(NULL, 0,"buffer string '%s' did not match expected value of '%.*s'. Line({})", buf.c_str(), (int) expected.size(), expected.data());
+        
+         std::string s ;
+        s.resize(slen);
+         slen = snprintf(s.data(), s.size(),"buffer string '%s' did not match expected value of '%.*s'. Line({})", buf.c_str(), (int) expected.size(), expected.data());
         fprintf(stderr, "%s\n", s.c_str());
         assert(false);
     }
-    assume_buffer_snapshots(tree, expected, start, locus);
-    assume_reverse_buffer(tree, buf, start + retract(tree->length()), locus);
+    assume_buffer_snapshots(tree, expected, start);
+    assume_reverse_buffer(tree, buf, start + retract(tree->length()));
 }
 
 using namespace PieceTree;
