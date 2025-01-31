@@ -3,7 +3,13 @@
 //#include <format>
 //#include <source_location>
 
+#if 1
+#include "ratbuf.h"
+#include "ratbuf_btree.cpp"
+#else
 #include "fredbuf.cpp"
+#endif
+
 
 void assume_buffer_snapshots(const PieceTree::Tree* tree, std::string_view expected, PieceTree::CharOffset offset)
 {
