@@ -5,7 +5,13 @@
 
 #include "arena.h"
 #include "fred-strings.h"
-#include "fredbuf.h"
+#if 1
+#include "ratbuf.h"
+#include "ratbuf_btree.cpp"
+#else
+#include "fredbuf.cpp"
+#endif
+
 
 // Debug helper from fredbuf.cpp.
 void print_buffer(const PieceTree::Tree* tree);
