@@ -58,8 +58,6 @@ namespace PieceTree
     {
         PieceTree::Piece piece;
 
-        PieceTree::Length left_subtree_length = { };
-        PieceTree::LFCount left_subtree_lf_count = { };
     };
     
     template <size_t MaxChildren>
@@ -76,25 +74,27 @@ namespace PieceTree
         {
             Node(std::array<NodePtr, MaxChildren> chld, 
                 std::array<Length, MaxChildren> offsets, 
-                size_t childCount):
+                size_t childCount, LFCount subTreeLineFeeds):
                     children(std::move(chld)), 
                     offsets(std::move(offsets)), 
-                    childCount(childCount)
+                    childCount(childCount),
+                    subTreeLineFeeds(subTreeLineFeeds)
             {
                 
             }
             Node(std::array<NodeData, MaxChildren> chld, 
                 std::array<Length, MaxChildren> offsets, 
-                size_t childCount):
+                size_t childCount, LFCount subTreeLineFeeds):
                     children(std::move(chld)), 
                     offsets(std::move(offsets)), 
-                    childCount(childCount)
+                    childCount(childCount),
+                    subTreeLineFeeds(subTreeLineFeeds)
             {
                 
             } 
             std::variant<ChildArray, LeafArray > children;
             std::array<Length, MaxChildren> offsets;
-            std::array<LFCount, MaxChildren> lineFeeds;
+            LFCount subTreeLineFeeds;
             size_t childCount;
             
             bool isLeaf ()const{
@@ -104,10 +104,6 @@ namespace PieceTree
             Length subTreeLength() const
             {
                 return offsets.back();
-            }
-            LFCount subTreeLineFeeds() const
-            {
-                return lineFeeds.back();
             }
         };
         explicit B_Tree() = default;
@@ -126,16 +122,19 @@ namespace PieceTree
         B_Tree removeRange(Offset at, Length len) const;
     private:
         B_Tree(NodePtr root);
+        
+        using ChildVector =std::vector<NodePtr>;
+        using LeafVector  =std::vector<NodeData>;
         struct TreeManipResult{
-            std::variant<std::vector<NodePtr>,std::vector<NodeData> > children;
+            std::variant<ChildVector, LeafVector> children;
             size_t violated_invariant;
             
             std::vector<TreeManipResult> invalid;
         };
         TreeManipResult insertInto(const Node* node, const NodeData& x, Length at, BufferCollection* buffers) const;
         TreeManipResult insertInto_leaf(const Node* node, const NodeData& x, Length at, BufferCollection* buffers) const;
-        NodePtr construct_leaf(std::vector<NodeData> data, size_t begin, size_t end) const ;
-        NodePtr construct_internal(std::vector<NodePtr> data, size_t begin, size_t end) const ;
+        NodePtr construct_leaf(const LeafVector &data, size_t begin, size_t end) const ;
+        NodePtr construct_internal(const ChildVector &data, size_t begin, size_t end) const ;
         
         NodePtr root_node;
         
@@ -171,7 +170,7 @@ namespace PieceTree
         {
             B_Tree<C>::NodePtr node;
             size_t index;
-            
+            Length offset;
         };
         std::vector<StackEntry> stack;
     };
