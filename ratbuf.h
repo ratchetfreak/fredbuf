@@ -100,6 +100,8 @@ namespace PieceTree
     // Indicates whether or not line was missing a CR (e.g. only a '\n' was at the end).
     enum class IncompleteCRLF : bool { No, Yes };
 
+    BufferCursor buffer_position(const BufferCollection* buffers, const Piece& piece, Length remainder);
+
     class Tree
     {
     public:
@@ -179,7 +181,7 @@ namespace PieceTree
         static void populate_from_node(std::string* buf, const BufferCollection* buffers, const StorageTree& node, Line line_index);
         static LFCount line_feed_count(const BufferCollection* buffers, BufferIndex index, const BufferCursor& start, const BufferCursor& end);
         static NodePosition node_at(const BufferCollection* buffers, StorageTree node, CharOffset off);
-        static BufferCursor buffer_position(const BufferCollection* buffers, const Piece& piece, Length remainder);
+        //static BufferCursor buffer_position(const BufferCollection* buffers, const Piece& piece, Length remainder);
         static char char_at(const BufferCollection* buffers, const StorageTree& node, CharOffset offset);
         static Piece trim_piece_right(const BufferCollection* buffers, const Piece& piece, const BufferCursor& pos);
         static Piece trim_piece_left(const BufferCollection* buffers, const Piece& piece, const BufferCursor& pos);
@@ -327,8 +329,8 @@ namespace PieceTree
 
         struct StackEntry
         {
-            PieceTree::StorageTree node;
-            Direction dir = Direction::Left;
+            const PieceTree::StorageTree::Node* node;
+            size_t index = 0;
         };
 
         const BufferCollection* buffers;
@@ -376,8 +378,8 @@ namespace PieceTree
 
         struct StackEntry
         {
-            PieceTree::StorageTree node;
-            Direction dir = Direction::Right;
+            const PieceTree::StorageTree::Node* node;
+            size_t index = 0;
         };
 
         const BufferCollection* buffers;
