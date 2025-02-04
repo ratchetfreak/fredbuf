@@ -69,6 +69,10 @@ namespace PieceTree
     template<size_t MaxChildren>
     B_Tree<MaxChildren> B_Tree<MaxChildren>::construct_from(std::vector<NodeData> leafNodes) const
     {
+        if(leafNodes.empty())
+        {
+            return B_Tree<MaxChildren>();
+        }
         std::vector<NodePtr> nodes;
         size_t i = 0;
         for(; i+ MaxChildren*2 < leafNodes.size(); i+=MaxChildren)
@@ -285,6 +289,15 @@ namespace PieceTree
     template<size_t MaxChildren>
     B_Tree<MaxChildren>::TreeManipResult B_Tree<MaxChildren>::insertInto_leaf(const Node* node, const NodeData& x, Length at, BufferCollection* buffers) const
     {
+        if(node==nullptr)
+        {
+            B_Tree<MaxChildren>::TreeManipResult res;
+            LeafVector r;
+            r.push_back(std::move(x));
+            res.children = r;
+            res.violated_invariant = ~size_t(0);
+            return res;
+        }
         auto offsets_end = node->offsets.begin()+node->childCount;
         auto insertPoint = std::lower_bound(node->offsets.begin(), offsets_end, at);
         auto insertIndex = insertPoint - node->offsets.begin();
@@ -304,6 +317,10 @@ namespace PieceTree
 
         Length split_offset = at - insert_child_start;
         auto splitting_piece = (*child_it).piece;
+        for(; child_it!=child_insert; ++child_it)
+        {
+            resultch.push_back(*child_it);
+        }
         if(split_offset > Length{0} && split_offset < splitting_piece.length)
         {
 
@@ -416,20 +433,33 @@ namespace PieceTree
             auto end_split_pos = buffer_position(buffers, allLeafs[i].piece, at+len);
             auto piece_left = trim_piece_left(buffers, allLeafs[i].piece, end_split_pos);
             Piece piece_right = trim_piece_right(buffers, allLeafs[i].piece, start_split_pos);
-            allChildren.push_back({piece_left});
             allChildren.push_back({piece_right});
+            allChildren.push_back({piece_left});
             
             //split
             i++;
         }
         else
         {
-            
-            NodeData trimright;
-            allChildren.push_back(allLeafs[i]);
-            len = len -  (allLeafs[i].piece.length - at);
+            auto start_split_pos = buffer_position(buffers, allLeafs[i].piece, at);
+            if(rep(at)>0)
+            {                
+                auto trimright = trim_piece_right(buffers, allLeafs[i].piece, start_split_pos);
+                allChildren.push_back({trimright});
+                len = len -  (allLeafs[i].piece.length - at);
+            }
             i++;
-            //for(i < allLeafs.size() && allLeafs[i].
+            for(;i < allLeafs.size() && allLeafs[i].piece.length < len;i++)
+            {
+                len  = len - allLeafs[i].piece.length;
+            }
+            if(rep(len) > 0)
+            {
+                auto end_split_pos = buffer_position(buffers, allLeafs[i].piece, len);
+                
+                auto piece_left = trim_piece_left(buffers, allLeafs[i].piece, end_split_pos);
+                allChildren.push_back({piece_left});
+            }
         }
         
         
@@ -493,7 +523,7 @@ namespace PieceTree
     B_Tree<MaxChildren>::TreeManipResult B_Tree<MaxChildren>::insertInto(const Node* node, const NodeData& x, Length at, BufferCollection* buffers) const
     {
 
-        if(node->isLeaf())
+        if(node==nullptr||node->isLeaf())
         {
             return insertInto_leaf(node, x, at, buffers);
         }
@@ -550,9 +580,16 @@ namespace PieceTree
             }
             else
             {
-                auto newChild = construct_internal(std::get<ChildVector>(insert_result.children), 0, newNumChildren);
-                resultch.push_back(newChild);
-
+                if(std::holds_alternative<LeafVector>(insert_result.children))
+                {
+                    auto newChild = construct_leaf(std::get<LeafVector>(insert_result.children), 0, newNumChildren);
+                    resultch.push_back(newChild);
+                }
+                else
+                {
+                    auto newChild = construct_internal(std::get<ChildVector>(insert_result.children), 0, newNumChildren);
+                    resultch.push_back(newChild);
+                }
                 ++child_it;
             }
 
@@ -943,7 +980,7 @@ namespace PieceTree
     void print_piece(const PieceTree::Piece& piece, const PieceTree::Tree* tree, int level)
     {
         const char* levels = "|||||||||||||||||||||||||||||||";
-        printf("%.*sidx{%zd}, first{l{%zd}, c{%zd}}, last{l{%zd}, c{%zd}}, len{%zd}, lf{%zd}\n",
+        printf("%.*s  :idx{%zd}, first{l{%zd}, c{%zd}}, last{l{%zd}, c{%zd}}, len{%zd}, lf{%zd}\n",
                 level, levels,
                 rep(piece.index), rep(piece.first.line), rep(piece.first.column),
                                   rep(piece.last.line), rep(piece.last.column),
@@ -1375,8 +1412,8 @@ namespace PieceTree
         auto* buffer = buffers->buffer_at(piece.index);
         auto first_offset = buffers->buffer_offset(piece.index, piece.first);
         auto last_offset = buffers->buffer_offset(piece.index, piece.last);
-        last_ptr = buffer->buffer.data() + rep(first_offset);
-        first_ptr = buffer->buffer.data() + rep(last_offset);
+        first_ptr = buffer->buffer.data() + rep(first_offset);
+        last_ptr = buffer->buffer.data() + rep(last_offset);
 
         
     }
@@ -1541,7 +1578,7 @@ void print_tree(const PieceTree::StorageTree::Node& root, const PieceTree::Tree*
     const char* levels = "|||||||||||||||||||||||||||||||";
     //auto this_offset = node_offset;
     printf("%.*sme: %p, leaf: %s\n",level, levels, &root, root.isLeaf()?"yes":"no");
-    printf("%.*s  :",level, levels);
+    //printf("%.*s  :\n",level, levels);
     if(root.isLeaf()){
         for(int i = 0; i < root.childCount;i++){
             print_piece(std::get<PieceTree::StorageTree::LeafArray>(root.children)[i].piece, tree, level);

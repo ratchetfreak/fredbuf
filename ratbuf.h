@@ -138,7 +138,7 @@ namespace PieceTree
 
         Length length() const
         {
-            return meta.total_content_length;
+            return root.length();
         }
 
         bool is_empty() const
@@ -148,7 +148,7 @@ namespace PieceTree
 
         LFCount line_feed_count() const
         {
-            return meta.lf_count;
+            return root.lf_count();
         }
 
         Length line_count() const
