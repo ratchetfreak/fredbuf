@@ -116,7 +116,14 @@ namespace PieceTree
 
         const Node* root_ptr() const;
         bool is_empty() const;
-
+        Length length() const
+        {
+            return root_node?root_node->subTreeLength():Length{0};
+        }
+        LFCount lf_count() const
+        {
+            return root_node?root_node->subTreeLineFeeds:LFCount{0};
+        }
 
         // Helpers.
         bool operator==(const B_Tree&) const = default;
