@@ -321,25 +321,23 @@ namespace PieceTree
         {
             return next();
         }
-    private:
-        void populate_ptrs();
-        void fast_forward_to(CharOffset offset);
-
-        enum class Direction { Left, Center, Right };
 
         struct StackEntry
         {
             const PieceTree::StorageTree::Node* node;
             size_t index = 0;
         };
+        std::vector<StackEntry> stack;
+        const char* first_ptr = nullptr;
+        const char* last_ptr = nullptr;
+    private:
+        void populate_ptrs();
+        void fast_forward_to(CharOffset offset);
 
         const BufferCollection* buffers;
         StorageTree root;
         BufferMeta meta;
-        std::vector<StackEntry> stack;
         CharOffset total_offset = CharOffset{ 0 };
-        const char* first_ptr = nullptr;
-        const char* last_ptr = nullptr;
     };
 
     class ReverseTreeWalker
@@ -370,25 +368,25 @@ namespace PieceTree
         {
             return next();
         }
+        struct StackEntry
+        {
+            const PieceTree::StorageTree::Node* node;
+            size_t index = 0;
+        };
+        std::vector<StackEntry> stack;
+        const char* first_ptr = nullptr;
+        const char* last_ptr = nullptr;
     private:
         void populate_ptrs();
         void fast_forward_to(CharOffset offset);
 
         enum class Direction { Left, Center, Right };
 
-        struct StackEntry
-        {
-            const PieceTree::StorageTree::Node* node;
-            size_t index = 0;
-        };
 
         const BufferCollection* buffers;
         StorageTree root;
         BufferMeta meta;
-        std::vector<StackEntry> stack;
         CharOffset total_offset = CharOffset{ 0 };
-        const char* first_ptr = nullptr;
-        const char* last_ptr = nullptr;
     };
 
     struct WalkSentinel { };
@@ -417,4 +415,7 @@ namespace PieceTree
         Offset last;
         EmptySelection empty;
     };
+    
+    
+
 } // namespace PieceTree

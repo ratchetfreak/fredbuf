@@ -18,6 +18,7 @@ void print_tree(const PieceTree::StorageTree::Node& root, const PieceTree::Tree*
 
 namespace PieceTree
 {
+    std::vector<algo_marker> algorithm;
     constexpr LFCount operator+(LFCount lhs, LFCount rhs)
     {
         return LFCount{ rep(lhs) + rep(rhs) };
@@ -120,49 +121,31 @@ namespace PieceTree
     template<size_t MaxChildren>
     B_Tree<MaxChildren> B_Tree<MaxChildren>::insert(const NodeData& x, Offset at, BufferCollection* buffers) const
     {
+        //TODO(ratchetfreak) : change result to be 1 or more ChildPtrs which is exactly the x node with the insert 
         const Node* root = root_node.get();
         auto result = insertInto(root, x, Editor::distance(Offset(0), at), buffers);
-        size_t newNumChildren = std::visit([](auto v)->size_t{return v.size();}, result.children);
-        if(newNumChildren > MaxChildren)
+        size_t newNumChildren = result.nodes.size();
+        if(newNumChildren > 1)
         {
-            size_t numLChild = newNumChildren/2;
 
 
-            NodePtr left;
-            NodePtr right;
-            if(std::holds_alternative<std::vector<NodeData>>(result.children))
-            {
-                left = construct_leaf(std::get<std::vector<NodeData> >(result.children), 0, numLChild);
-                right = construct_leaf(std::get<std::vector<NodeData> >(result.children), numLChild, newNumChildren);
-            }
-            else
-            {
-                left = construct_internal(std::get<std::vector<NodePtr> >(result.children), 0, numLChild);
-                right = construct_internal(std::get<std::vector<NodePtr> >(result.children), numLChild, newNumChildren);
-            }
+            NodePtr new_root = construct_internal(result.nodes, 0, newNumChildren);
+            
 
-            std::array<NodePtr, MaxChildren> new_root_children;
-            std::array<Length, MaxChildren> new_root_offsets;
-            new_root_children[0] = left;
-            new_root_offsets[0] = left->subTreeLength();
-            new_root_children[1] = right;
-            new_root_offsets[1] = left->subTreeLength()+right->subTreeLength();
-            LFCount totalLf = left->subTreeLineFeeds+right->subTreeLineFeeds;
-            NodePtr new_root = std::make_shared<Node>(new_root_children, new_root_offsets, 2, totalLf);
 
             return B_Tree<MaxChildren>(new_root);
         }
         else
         {
-            if(std::holds_alternative<std::vector<NodeData>>(result.children))
+            if(result.nodes.empty())
             {
-                NodePtr new_root = construct_leaf(std::get<std::vector<NodeData> >(result.children), 0, newNumChildren);
-                return B_Tree<MaxChildren>(new_root);
+                
+                return B_Tree<MaxChildren>();
             }
             else
             {
-                NodePtr new_root = construct_internal(std::get<std::vector<NodePtr> >(result.children), 0, newNumChildren);
-                return B_Tree<MaxChildren>(new_root);
+                
+                return B_Tree<MaxChildren>(std::move(result.nodes.front()));
             }
         }
     }
@@ -289,13 +272,14 @@ namespace PieceTree
     template<size_t MaxChildren>
     B_Tree<MaxChildren>::TreeManipResult B_Tree<MaxChildren>::insertInto_leaf(const Node* node, const NodeData& x, Length at, BufferCollection* buffers) const
     {
+        if(node)algo_mark(node->shared_from_this(), Traverse);
+        //TODO(ratchetfreak) : change result to be 1 or more ChildPtrs which is exactly the x node with the insert 
         if(node==nullptr)
         {
             B_Tree<MaxChildren>::TreeManipResult res;
             LeafVector r;
             r.push_back(std::move(x));
-            res.children = r;
-            res.violated_invariant = ~size_t(0);
+            res.nodes.push_back(construct_leaf(r, 0, 1));
             return res;
         }
         auto offsets_end = node->offsets.begin()+node->childCount;
@@ -379,8 +363,16 @@ namespace PieceTree
             resultch.push_back(*child_it);
         }
         B_Tree<MaxChildren>::TreeManipResult res;
-        res.children = std::move(resultch);
-        res.violated_invariant = ~size_t(0);
+        if(resultch.size()>MaxChildren)
+        {
+            size_t mid = resultch.size()/2;
+            res.nodes.push_back(construct_leaf(resultch, 0, mid));
+            res.nodes.push_back(construct_leaf(resultch, mid, resultch.size()));
+        }
+        else
+        {
+            res.nodes.push_back(construct_leaf(resultch, 0, resultch.size()));
+        }
         return res;
     }
     
@@ -413,6 +405,8 @@ namespace PieceTree
                 allLeafs.push_back(*it);
             }
         }
+        size_t numLeafs = allLeafs.size();
+        (void)numLeafs;
         
         LeafVector allChildren;
         
@@ -420,45 +414,50 @@ namespace PieceTree
         
         for(;i < allLeafs.size() && allLeafs[i].piece.length <= at;i++)
         {
-            allChildren.push_back(allLeafs[i]);
-            at = at - allLeafs[i].piece.length;
+            auto current_leaf = allLeafs[i];
+            allChildren.push_back(current_leaf);
+            at = at - current_leaf.piece.length;
         }
         
-        
         //trim or split allLeafs[i].piece
-        if(at+len < allLeafs[i].piece.length)
+        if(at+len <= allLeafs[i].piece.length)
         {
-            auto start_split_pos = buffer_position(buffers, allLeafs[i].piece, at);
+            auto piece_to_split = allLeafs[i].piece;
+            auto start_split_pos = buffer_position(buffers, piece_to_split, at);
             
-            auto end_split_pos = buffer_position(buffers, allLeafs[i].piece, at+len);
-            auto piece_left = trim_piece_left(buffers, allLeafs[i].piece, end_split_pos);
-            Piece piece_right = trim_piece_right(buffers, allLeafs[i].piece, start_split_pos);
-            allChildren.push_back({piece_right});
-            allChildren.push_back({piece_left});
+            auto end_split_pos = buffer_position(buffers, piece_to_split, at+len);
+            auto piece_left = trim_piece_left(buffers, piece_to_split, end_split_pos);
+            Piece piece_right = trim_piece_right(buffers, piece_to_split, start_split_pos);
+            
+            if(rep(piece_right.length) > 0)
+                allChildren.push_back({piece_right});
+            if(rep(piece_left.length) > 0)
+                allChildren.push_back({piece_left});
             
             //split
             i++;
         }
         else
         {
-            auto start_split_pos = buffer_position(buffers, allLeafs[i].piece, at);
             if(rep(at)>0)
             {                
+                auto start_split_pos = buffer_position(buffers, allLeafs[i].piece, at);
                 auto trimright = trim_piece_right(buffers, allLeafs[i].piece, start_split_pos);
                 allChildren.push_back({trimright});
-                len = len -  (allLeafs[i].piece.length - at);
             }
+            len = len -  (allLeafs[i].piece.length - at);
             i++;
-            for(;i < allLeafs.size() && allLeafs[i].piece.length < len;i++)
+            for(;i < allLeafs.size() && allLeafs[i].piece.length <= len;i++)
             {
                 len  = len - allLeafs[i].piece.length;
             }
-            if(rep(len) > 0)
+            if(rep(len) > 0 && i < allLeafs.size())
             {
                 auto end_split_pos = buffer_position(buffers, allLeafs[i].piece, len);
                 
                 auto piece_left = trim_piece_left(buffers, allLeafs[i].piece, end_split_pos);
                 allChildren.push_back({piece_left});
+                i++;
             }
         }
         
@@ -496,7 +495,7 @@ namespace PieceTree
             result.push_back(construct_leaf(allChildren, mid, allChildren.size()));
             
         }
-        else
+        else if(allChildren.size() > 0)
         {
             //assert(allChildren.size() >= MaxChildren/2);
             result.push_back(construct_leaf(allChildren, 0, allChildren.size()));
@@ -522,7 +521,8 @@ namespace PieceTree
     template<size_t MaxChildren>
     B_Tree<MaxChildren>::TreeManipResult B_Tree<MaxChildren>::insertInto(const Node* node, const NodeData& x, Length at, BufferCollection* buffers) const
     {
-
+        if(node)algo_mark(node->shared_from_this(), Traverse);
+        //TODO(ratchetfreak) : change result to be 1 or more ChildPtrs which is exactly the x node with the insert 
         if(node==nullptr||node->isLeaf())
         {
             return insertInto_leaf(node, x, at, buffers);
@@ -533,76 +533,64 @@ namespace PieceTree
             auto offsets_end = node->offsets.begin()+node->childCount;
             auto insertPoint = std::lower_bound(node->offsets.begin(), offsets_end, at);
             size_t insertIndex = insertPoint - node->offsets.begin();
-
-
-            auto insert_child = node_children[insertIndex];
-
-            auto insert_result = insertInto(insert_child.get(), x, *insertPoint - insert_child->subTreeLength(), buffers);
-
             auto insertChIt = node_children.begin()+insertIndex;
+            auto insertChItEnd = node_children.begin()+node->childCount;
 
             std::vector<NodePtr> resultch;
-
             auto child_it = (node_children).begin();
-
 
             for(; child_it!=insertChIt; ++child_it)
             {
                 resultch.push_back(*child_it);
-
             }
 
-            size_t newNumChildren = std::visit([](auto v){return v.size();}, insert_result.children);
-            if(newNumChildren > MaxChildren)
+
+            Length childInsert = at;
+            if(insertIndex>0)
             {
-                //split the to-be inserted node into two
-                size_t numLChild = newNumChildren/2;
-
-                NodePtr leftChild;
-                NodePtr rightChild;
-                if(std::holds_alternative<LeafVector>(insert_result.children))
-                {
-                    leftChild = construct_leaf( std::get<LeafVector>(insert_result.children), 0, numLChild);
-                    rightChild = construct_leaf( std::get<LeafVector>(insert_result.children), numLChild, newNumChildren);
-                }
-                else
-                {
-                    leftChild  = construct_internal(std::get<ChildVector>(insert_result.children), 0, numLChild);
-                    rightChild = construct_internal(std::get<ChildVector>(insert_result.children), numLChild, newNumChildren);
-                }
-
-                resultch.push_back(std::move(leftChild));
-
-                resultch.push_back(std::move(rightChild));
-
-                ++child_it;
-
+                childInsert = childInsert - node->offsets[insertIndex - 1];
             }
-            else
+            auto insert_child = node_children[insertIndex];
+            auto insert_result = insertInto(insert_child.get(), x, childInsert, buffers);
+
+            size_t newNumChildren = insert_result.nodes.size();
+            
+            for(int i = 0; i< newNumChildren;i++)
             {
-                if(std::holds_alternative<LeafVector>(insert_result.children))
-                {
-                    auto newChild = construct_leaf(std::get<LeafVector>(insert_result.children), 0, newNumChildren);
-                    resultch.push_back(newChild);
-                }
-                else
-                {
-                    auto newChild = construct_internal(std::get<ChildVector>(insert_result.children), 0, newNumChildren);
-                    resultch.push_back(newChild);
-                }
-                ++child_it;
+                resultch.push_back(insert_result.nodes[i]);
             }
-
-            for(; child_it!=node_children.end();  ++child_it)
+            child_it++;
+            for(; child_it!=insertChItEnd;  ++child_it)
             {
                 resultch.push_back(*child_it);
 
             }
-            B_Tree<MaxChildren>::TreeManipResult res;
-            res.children = std::move(resultch);
+            
+            if(resultch.size() > MaxChildren)
+            {
+                //split the to-be inserted node into two
+                size_t numLChild = resultch.size()/2;
 
-            res.violated_invariant = ~((size_t)0);
-            return res;
+                NodePtr leftChild = construct_internal(resultch, 0, numLChild);
+                NodePtr rightChild = construct_internal(resultch, numLChild, resultch.size());
+                
+                TreeManipResult manipresult;
+                manipresult.nodes.push_back(std::move(leftChild));
+
+                manipresult.nodes.push_back(std::move(rightChild));
+                
+                return manipresult;
+            }
+            else
+            {
+            
+                auto newChild = construct_internal(resultch
+                , 0, resultch.size());
+                TreeManipResult manipresult;
+                manipresult.nodes.push_back(std::move(newChild));
+                return manipresult;
+            }
+
 
         }
         // return {};
@@ -611,10 +599,15 @@ namespace PieceTree
     template<size_t MaxChildren>
     B_Tree<MaxChildren>::ChildVector B_Tree<MaxChildren>::remove_from(const Node* a, const Node* b, const Node* c, Length at, Length len, BufferCollection* buffers) const
     {
+        
+        if(a) algo_mark(a->shared_from_this(), Traverse);
+        if(b) algo_mark(b->shared_from_this(), Traverse);
+        if(c) algo_mark(c->shared_from_this(), Traverse);
         // at least one of a and c should not participate in the remove
         // that way the result is always big enough to make at least 1 node
         
-        if(a->isLeaf()){
+        if(a->isLeaf())
+        {
             return remove_from_leafs(a, b, c, at, len, buffers);
         }
         else
@@ -625,13 +618,21 @@ namespace PieceTree
             
             {
                 const ChildArray& chA = std::get<ChildArray>(a->children);
-                const ChildArray& chB = std::get<ChildArray>(b->children);
-                const ChildArray& chC = std::get<ChildArray>(c->children);
                 auto outputIt = allChildren.begin();
                 outputIt = std::copy_n(chA.begin(), a->childCount, outputIt);
-                outputIt = std::copy_n(chB.begin(), b->childCount, outputIt);
-                outputIt = std::copy_n(chC.begin(), c->childCount, outputIt);
-                totalChildCount = a->childCount +b->childCount +c->childCount;
+                totalChildCount = a->childCount;
+                if(b!=nullptr)
+                {
+                    const ChildArray& chB = std::get<ChildArray>(b->children);
+                    outputIt = std::copy_n(chB.begin(), b->childCount, outputIt);
+                    totalChildCount = totalChildCount + b->childCount;
+                }
+                if(c!=nullptr)
+                {
+                    const ChildArray& chC = std::get<ChildArray>(c->children);
+                    outputIt = std::copy_n(chC.begin(), c->childCount, outputIt);
+                    totalChildCount = totalChildCount + c->childCount;
+                }
             }
             NodePtr recA = nullptr;
             NodePtr recB = nullptr;
@@ -670,40 +671,99 @@ namespace PieceTree
                         (recB?recB->subTreeLength():Length{0})+
                         recC->subTreeLength();
             Length to_remove_from_first_found = aplusbplusc - offset;
-            Length to_remove_from_rest = len - to_remove_from_first_found;
+            i++;
+            ChildVector res;
             
-            for(;i< totalChildCount && 
-                    allChildren[i]->subTreeLength() < to_remove_from_rest;i++)
+            if(len < to_remove_from_first_found)
             {
-                to_remove_from_rest = to_remove_from_rest - allChildren[i]->subTreeLength();
-            }
-            
-            
-            //now allChildren[i] is the last child to remove anything from // is might be recC if not push the last partial
-            
-            if(recC.get() != allChildren[i].get())
-            {
-                if(recA)
+                //everything to be removed is in recC, ensure recA and recB are filled
+                
+                while(!recA)
                 {
-                    offset = offset - recA->subTreeLength();
-                    resultChildren.push_back(std::move(recA));
+                    if(i >= totalChildCount)
+                    {
+                        //end of array and not enough to fill a node
+                        assert(c==nullptr);
+                        if(recB)
+                        {
+                            return remove_from(recB.get(), recC.get(), nullptr, offset, len, buffers);
+                        }
+                        else 
+                        {
+                            return remove_from(recC.get(), nullptr, nullptr, offset, len, buffers);
+                        }
+                    }
+                    recA = recB;
+                    recB = recC;
+                    recC = allChildren[i];
+                    i++;
+                    
                 }
-                recA = recB;
-                recB = recC;
-                recC = allChildren[i];
-                i++;
+                 res = remove_from(recA.get(), recB.get(), recC.get(), offset, len, buffers);
             }
-            //recA and recB might still be nullptr
-            while(!recA)
+            else
             {
-                recA = recB;
-                recB = recC;
-                recC = allChildren[i];
-                i++;
+                Length to_remove_from_rest = len - to_remove_from_first_found;
+                
+                for(;i< totalChildCount && 
+                        allChildren[i]->subTreeLength() < to_remove_from_rest;i++)
+                {
+                    to_remove_from_rest = to_remove_from_rest - allChildren[i]->subTreeLength();
+                }
+                
+                
+                //now allChildren[i] is the last child to remove anything from 
+                
+                if(i >= totalChildCount && !recA)
+                {
+                    //end of array and not enough to fill a node
+                    assert(c==nullptr); // can only come from root
+                    if(recB)
+                    {
+                        return remove_from(recB.get(), recC.get(), nullptr, offset, to_remove_from_first_found + to_remove_from_rest, buffers);
+                    }
+                    else 
+                    {
+                        return remove_from(recC.get(), nullptr, nullptr, offset, to_remove_from_first_found + to_remove_from_rest, buffers);
+                    }
+                }
+                
+                if(i < totalChildCount)
+                {
+                    if(recA)
+                    {
+                        offset = offset - recA->subTreeLength();
+                        resultChildren.push_back(std::move(recA));
+                    }
+                    recA = recB;
+                    recB = recC;
+                    recC = allChildren[i];
+                    i++;
+                }
+                //recA and recB might still be nullptr
+                while(!recA)
+                {
+                    if(i >= totalChildCount)
+                    {
+                        //end of array and not enough to fill a node
+                        assert(c==nullptr);
+                        if(recB)
+                        {
+                            return remove_from(recB.get(), recC.get(), nullptr, offset, to_remove_from_first_found + to_remove_from_rest, buffers);
+                        }
+                        else 
+                        {
+                            return remove_from(recC.get(), nullptr, nullptr, offset, to_remove_from_first_found + to_remove_from_rest, buffers);
+                        }
+                    }
+                    recA = recB;
+                    recB = recC;
+                    recC = allChildren[i];
+                    i++;
+                    
+                }
+                res = remove_from(recA.get(), recB.get(), recC.get(), offset, to_remove_from_first_found + to_remove_from_rest, buffers);
             }
-            
-            ChildVector res = remove_from(recA.get(), recB.get(), recC.get(), offset, to_remove_from_rest, buffers);
-            
             
             for(auto it = res.begin(); it != res.end();++it){
                 resultChildren.push_back(std::move(*it));
@@ -741,8 +801,8 @@ namespace PieceTree
             }
             else
             {
-                assert(result.size() >= MaxChildren/2);
-                resultChildren.push_back(construct_internal(result, 0, result.size()));
+                assert(result.size() >= MaxChildren/2 || c==nullptr);
+                result.push_back(construct_internal(resultChildren, 0, resultChildren.size()));
             }
             
             return result;
@@ -753,6 +813,7 @@ namespace PieceTree
     template<size_t MaxChildren>
     B_Tree<MaxChildren>::NodePtr B_Tree<MaxChildren>::construct_leaf(const LeafVector &data, size_t begin, size_t end) const
     {
+        
         size_t numChild = end-begin;
         assert(numChild <= MaxChildren);
         std::array<NodeData, MaxChildren> new_left_children;
@@ -766,8 +827,9 @@ namespace PieceTree
             new_left_offsets[i] = acc;
             linefeed = linefeed + data[begin+i].piece.newline_count;
         }
-
-        return std::make_shared<Node>(new_left_children, new_left_offsets,  end-begin, linefeed);
+        auto result = std::make_shared<Node>(new_left_children, new_left_offsets,  end-begin, linefeed);
+        algo_mark(result, Made);
+        return result;
     }
 
 
@@ -789,7 +851,9 @@ namespace PieceTree
 
         }
 
-        return std::make_shared<Node>(new_left_children, new_left_offsets,  end-begin, linefeed);
+        auto result = std::make_shared<Node>(new_left_children, new_left_offsets,  end-begin, linefeed);
+        algo_mark(result, Made);
+        return result;
     }
 
     template<size_t MaxChildren>
@@ -1183,6 +1247,12 @@ namespace PieceTree
         assert(line != Line::IndexBeginning);
         auto line_index = rep(retract(line));
         
+        if(line_index == 0) 
+        {
+            *offset = CharOffset {0};
+            return;
+        }
+        
         const StorageTree::Node* n = node.root_ptr();
         while(!n->isLeaf())
         {
@@ -1204,10 +1274,8 @@ namespace PieceTree
         int i;
         for(i = 0; i < n->childCount;i++)
         {
-            if(line_index  < rep(children[i].piece.newline_count))
+            if(line_index < rep(children[i].piece.newline_count))
             {
-                
-                
                 break;
             }
             line_index -= rep(children[i].piece.newline_count);
@@ -1221,6 +1289,7 @@ namespace PieceTree
         {
             len = len + (*accumulate)(buffers, piece, Line{ line_index - 1 });
         }
+        *offset = *offset + len;
         
     }
     
@@ -1350,6 +1419,7 @@ namespace PieceTree
     void TreeWalker::seek(CharOffset offset)
     {
         stack.clear();
+        if(!root.root_ptr())return;
         stack.push_back({ root.root_ptr() });
         total_offset = offset;
         
@@ -1357,24 +1427,31 @@ namespace PieceTree
         
         while(!stack.back().node->isLeaf())
         {
-            const StorageTree::ChildArray& children = std::get<StorageTree::ChildArray>(stack.back().node->children);
-            for(stack.back().index = 0; stack.back().index< stack.back().node->childCount;stack.back().index++)
+            algo_mark(stack.back().node->shared_from_this(), Collect);
+            auto &stack_entry = stack.back();
+            const StorageTree::ChildArray& children = std::get<StorageTree::ChildArray>(stack_entry.node->children);
+            for(stack_entry.index = 0; stack_entry.index< stack_entry.node->childCount; stack_entry.index++)
             {
-                if(rep(offset)  < rep(children[stack.back().index]->subTreeLength()))
+                auto subtreelen = children[stack_entry.index]->subTreeLength();
+                if(rep(offset) < rep(subtreelen)+ rep(accumulated))
                 {
-                    stack.push_back({children[stack.back().index].get()});
+                    stack.push_back({children[stack_entry.index++].get()});
                     break;
                 }
-                accumulated = accumulated + children[stack.back().index]->subTreeLength();
+                algo_mark(children[stack_entry.index]->shared_from_this(), Traverse);
+                accumulated = accumulated + subtreelen;
             }
         }
         const StorageTree::LeafArray& children = std::get<StorageTree::LeafArray>(stack.back().node->children);
+        algo_mark(stack.back().node->shared_from_this(), Collect);
         for(stack.back().index = 0; stack.back().index< stack.back().node->childCount;stack.back().index++)
         {
-            if(rep(offset)  < rep(children[stack.back().index].piece.length))
+            auto subtreelen = children[stack.back().index].piece.length;
+            if(rep(offset) < rep(subtreelen) + rep(accumulated))
             {
                 break;
             }
+                accumulated = accumulated + subtreelen;
         }
         auto& piece = children[stack.back().index++].piece;
         auto* buffer = buffers->buffer_at(piece.index);
@@ -1401,11 +1478,12 @@ namespace PieceTree
         }
         while(!stack.back().node->isLeaf())
         {
+            algo_mark(stack.back().node->shared_from_this(), Traverse);
             const StorageTree::ChildArray& children = std::get<StorageTree::ChildArray>(stack.back().node->children);
             size_t childIndex = stack.back().index++;
             stack.push_back({children[childIndex].get(), 0});
         }
-        
+        algo_mark(stack.back().node->shared_from_this(), Traverse);
         const StorageTree::LeafArray leafs = std::get<StorageTree::LeafArray>(stack.back().node->children);
         
         auto& piece = leafs[stack.back().index++].piece;
@@ -1577,11 +1655,11 @@ void print_tree(const PieceTree::StorageTree::Node& root, const PieceTree::Tree*
 
     const char* levels = "|||||||||||||||||||||||||||||||";
     //auto this_offset = node_offset;
-    printf("%.*sme: %p, leaf: %s\n",level, levels, &root, root.isLeaf()?"yes":"no");
+    printf("%.*sme: %p, numch: %zd leaf: %s\n",level, levels, &root, root.childCount, root.isLeaf()?"yes":"no");
     //printf("%.*s  :\n",level, levels);
     if(root.isLeaf()){
         for(int i = 0; i < root.childCount;i++){
-            print_piece(std::get<PieceTree::StorageTree::LeafArray>(root.children)[i].piece, tree, level);
+            print_piece(std::get<PieceTree::StorageTree::LeafArray>(root.children)[i].piece, tree, level+1);
         }
 
     }
