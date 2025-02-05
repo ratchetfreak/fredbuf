@@ -139,10 +139,8 @@ namespace PieceTree
         using ChildVector =std::vector<NodePtr>;
         using LeafVector  =std::vector<NodeData>;
         struct TreeManipResult{
-            std::variant<ChildVector, LeafVector> children;
-            size_t violated_invariant;
-
-            std::vector<TreeManipResult> invalid;
+            ChildVector nodes;
+            
         };
         TreeManipResult insertInto(const Node* node, const NodeData& x, Length at, BufferCollection* buffers) const;
         TreeManipResult insertInto_leaf(const Node* node, const NodeData& x, Length at, BufferCollection* buffers) const;
@@ -192,5 +190,18 @@ namespace PieceTree
         std::vector<StackEntry> stack;
     };
 
-
+    #if 1
+    enum class MarkReason : size_t { None, Traverse, Split, Made, Collect };
+    struct algo_marker
+    {
+        B_Tree<10>::NodePtr node;
+        MarkReason reason;
+    };
+    extern std::vector<algo_marker> algorithm;
+    
+    #define algo_mark(node, reason) algorithm.push_back({node, MarkReason::reason})
+    #else
+    #define algo_mark(node, reason) do{}while(0)
+    #endif
+    
 };
