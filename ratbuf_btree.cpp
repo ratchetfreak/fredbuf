@@ -28,7 +28,7 @@ namespace PieceTree
     {
         if (root.is_empty())
             return { };
-        return root.root_ptr()->subTreeLineFeeds;
+        return root.root_ptr()->subTreeLineFeeds();
     }
     namespace
     {
@@ -818,6 +818,7 @@ namespace PieceTree
         assert(numChild <= MaxChildren);
         std::array<NodeData, MaxChildren> new_left_children;
         std::array<Length, MaxChildren>  new_left_offsets;
+        std::array<LFCount, MaxChildren>  new_left_linefeed;
         Length acc{0};
         LFCount linefeed{0};
         for(int i = 0; i < numChild; i++)
@@ -826,8 +827,9 @@ namespace PieceTree
             acc = acc + data[begin+i].piece.length;
             new_left_offsets[i] = acc;
             linefeed = linefeed + data[begin+i].piece.newline_count;
+            new_left_linefeed[i] = linefeed;
         }
-        auto result = std::make_shared<Node>(new_left_children, new_left_offsets,  end-begin, linefeed);
+        auto result = std::make_shared<Node>(new_left_children, new_left_offsets, new_left_linefeed, end-begin);
         algo_mark(result, Made);
         return result;
     }
@@ -840,6 +842,7 @@ namespace PieceTree
         assert(numChild <= MaxChildren);
         std::array<NodePtr, MaxChildren> new_left_children;
         std::array<Length, MaxChildren>  new_left_offsets;
+        std::array<LFCount, MaxChildren>  new_left_linefeed;
         Length acc{0};
         LFCount linefeed{0};
         for(int i = 0; i < numChild; i++)
@@ -847,11 +850,12 @@ namespace PieceTree
             new_left_children[i] =data[begin+i];
              acc = acc + data[begin+i]->subTreeLength();
             new_left_offsets[i] = acc;
-            linefeed = linefeed + data[begin+i]->subTreeLineFeeds;
+            linefeed = linefeed + data[begin+i]->subTreeLineFeeds();
+            new_left_linefeed[i] = linefeed;
 
         }
 
-        auto result = std::make_shared<Node>(new_left_children, new_left_offsets,  end-begin, linefeed);
+        auto result = std::make_shared<Node>(new_left_children, new_left_offsets, new_left_linefeed, end-begin);
         algo_mark(result, Made);
         return result;
     }
@@ -1108,13 +1112,13 @@ namespace PieceTree
             int i = 0;
             for(; i<node->childCount; i++)
             {
-                if(rep(distance(Offset{node_start_offset}, off)) < rep(children[i]->subTreeLength()))
+                if(rep(distance(Offset{node_start_offset}, off)) < rep(node->offsets[i]))
                 {
                     node = children[i].get();
                     break;
                 }
-                node_start_offset += rep(children[i]->subTreeLength());
-                newline_count += rep(children[i]->subTreeLineFeeds);
+                node_start_offset += rep(node->offsets[i]);
+                newline_count += rep(node->lineFeeds[i]);
             }
             if(i==node->childCount){
                 node = children[node->childCount-1].get();
@@ -1250,8 +1254,6 @@ namespace PieceTree
         assert(line != Line::IndexBeginning);
         auto line_index = rep(retract(line));
 
-
-
         const StorageTree::Node* n = node.root_ptr();
         while(!n->isLeaf())
         {
@@ -1259,15 +1261,14 @@ namespace PieceTree
             int i;
             for(i = 0; i < n->childCount;i++)
             {
-                if(line_index  <= rep(children[i]->subTreeLineFeeds))
+                if(line_index  <= rep(n->lineFeeds[i]))
                 {
-
                     n = children[i].get();
                     break;
                 }
-                line_index -= rep(children[i]->subTreeLineFeeds);
+                line_index -= rep(n->lineFeeds[i]);
 
-                *offset = *offset + (children[i]->subTreeLength());
+                *offset = *offset + (n->offsets[i]);
             }
             if(i==n->childCount)
                 return;
@@ -1429,34 +1430,43 @@ namespace PieceTree
         total_offset = offset;
 
         Length accumulated {0};
-
+        if(rep(offset) > rep(stack.back().node->subTreeLength()))
+        {
+            stack.clear();
+            return;
+        }
         while(!stack.back().node->isLeaf())
         {
             algo_mark(stack.back().node->shared_from_this(), Collect);
             auto &stack_entry = stack.back();
             const StorageTree::ChildArray& children = std::get<StorageTree::ChildArray>(stack_entry.node->children);
+            Length sublen {0};
             for(stack_entry.index = 0; stack_entry.index< stack_entry.node->childCount; stack_entry.index++)
             {
-                auto subtreelen = children[stack_entry.index]->subTreeLength();
+                auto subtreelen = stack_entry.node->offsets[stack_entry.index];
                 if(rep(offset) < rep(subtreelen)+ rep(accumulated))
                 {
                     stack.push_back({children[stack_entry.index++].get()});
+                    accumulated = accumulated + sublen;
                     break;
                 }
                 algo_mark(children[stack_entry.index]->shared_from_this(), Traverse);
-                accumulated = accumulated + subtreelen;
+                sublen = subtreelen;
             }
+            
         }
         const StorageTree::LeafArray& children = std::get<StorageTree::LeafArray>(stack.back().node->children);
         algo_mark(stack.back().node->shared_from_this(), Collect);
+        Length sublen {0};
         for(stack.back().index = 0; stack.back().index< stack.back().node->childCount;stack.back().index++)
         {
-            auto subtreelen = children[stack.back().index].piece.length;
+            auto subtreelen = stack.back().node->offsets[stack.back().index];
             if(rep(offset) < rep(subtreelen) + rep(accumulated))
             {
+                accumulated = accumulated + sublen;
                 break;
             }
-                accumulated = accumulated + subtreelen;
+            sublen = subtreelen;
         }
         auto& piece = children[stack.back().index++].piece;
         auto* buffer = buffers->buffer_at(piece.index);
@@ -1629,18 +1639,20 @@ namespace PieceTree
             algo_mark(stack.back().node->shared_from_this(), Collect);
             auto &stack_entry = stack.back();
             const StorageTree::ChildArray& children = std::get<StorageTree::ChildArray>(stack_entry.node->children);
+            Length sublen {0};
             for(stack_entry.index = 0; stack_entry.index< stack_entry.node->childCount; stack_entry.index++)
             {
-                auto subtreelen = children[stack_entry.index]->subTreeLength();
+                auto subtreelen = stack_entry.node->offsets[stack_entry.index];
                 if(rep(offset) < rep(subtreelen)+ rep(accumulated))
                 {
                     auto index = stack_entry.index++;
                     stack_entry.index = stack_entry.node->childCount - index;
                     stack.push_back({children[index].get()});
+                    accumulated = accumulated + sublen;
                     break;
                 }
                 algo_mark(children[stack_entry.index]->shared_from_this(), Traverse);
-                accumulated = accumulated + subtreelen;
+                sublen = subtreelen;
             }
         }
         const StorageTree::LeafArray& children = std::get<StorageTree::LeafArray>(stack.back().node->children);
@@ -1652,7 +1664,7 @@ namespace PieceTree
             {
                 break;
             }
-                accumulated = accumulated + subtreelen;
+            accumulated = accumulated + subtreelen;
         }
 
         auto& piece = children[stack.back().index++].piece;
