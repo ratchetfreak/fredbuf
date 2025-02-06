@@ -74,33 +74,37 @@ namespace PieceTree
         {
             Node(std::array<NodePtr, MaxChildren> chld,
                 std::array<Length, MaxChildren> offsets,
-                size_t childCount, LFCount subTreeLineFeeds):
+                std::array<LFCount, MaxChildren> lineFeeds,
+                size_t childCount):
                     children(std::move(chld)),
                     offsets(std::move(offsets)),
-                    childCount(childCount),
-                    subTreeLineFeeds(subTreeLineFeeds)
+                    lineFeeds(lineFeeds),
+                    childCount(childCount)
             {
                 if(childCount < MaxChildren)
                 {
                     this->offsets.back() = offsets[childCount-1];
+                    this->lineFeeds.back() = lineFeeds[childCount-1];
                 }
             }
             Node(std::array<NodeData, MaxChildren> chld,
                 std::array<Length, MaxChildren> offsets,
-                size_t childCount, LFCount subTreeLineFeeds):
+                std::array<LFCount, MaxChildren> lineFeeds,
+                size_t childCount):
                     children(std::move(chld)),
                     offsets(std::move(offsets)),
-                    childCount(childCount),
-                    subTreeLineFeeds(subTreeLineFeeds)
+                    lineFeeds(lineFeeds),
+                    childCount(childCount)
             {
                 if(childCount < MaxChildren)
                 {
                     this->offsets.back() = offsets[childCount-1];
+                    this->lineFeeds.back() = lineFeeds[childCount-1];
                 }
             }
             std::variant<ChildArray, LeafArray > children;
             std::array<Length, MaxChildren> offsets;
-            LFCount subTreeLineFeeds;
+            std::array<LFCount, MaxChildren> lineFeeds;
             size_t childCount;
 
             bool isLeaf ()const{
@@ -110,6 +114,11 @@ namespace PieceTree
             Length subTreeLength() const
             {
                 return offsets.back();
+            }
+            
+            LFCount subTreeLineFeeds() const
+            {
+                return lineFeeds.back();
             }
         };
         explicit B_Tree() = default;
@@ -122,7 +131,7 @@ namespace PieceTree
         }
         LFCount lf_count() const
         {
-            return root_node?root_node->subTreeLineFeeds:LFCount{0};
+            return root_node?root_node->subTreeLineFeeds():LFCount{0};
         }
 
         // Helpers.
