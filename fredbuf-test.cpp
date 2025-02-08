@@ -594,6 +594,21 @@ void test10()
     }
 }
 
+
+void test11()
+{
+        
+    TreeBuilder builder;
+    std::string buf;
+    for(int i = 0; i< 1000; i++)
+        builder.accept("Hello, World!");
+    auto tree = builder.create();
+    
+    tree.remove(CharOffset{ 14 }, retract(tree.length(),  14*2 ));
+    assume_buffer(&tree, "Hello, World!H!Hello, World!");
+
+}
+
 int main()
 {
     test1();
@@ -606,4 +621,5 @@ int main()
     test8();
     test9();
     test10();
+    test11();
 }
