@@ -30,7 +30,7 @@ void assume_buffer_snapshots(const PieceTree::Tree* tree, std::string_view expec
             std::string s ;
             s.resize(slen);
             slen = snprintf(s.data(), s.size(), "owning snapshot buffer string '%s' did not match expected value of '%.*s'. Line()", buf.c_str(),(int) expected.size(), expected.data());
-            
+
             //auto s = std::format("owning snapshot buffer string '{}' did not match expected value of '{}'. Line({})", buf, expected, locus.line());
             fprintf(stderr, "%.*s\n", (int)s.size(), s.c_str());
             assert(false);
@@ -54,7 +54,7 @@ void assume_buffer_snapshots(const PieceTree::Tree* tree, std::string_view expec
             std::string s ;
             s.resize(slen);
             slen = snprintf(s.data(), s.size(), "reference snapshot buffer string '%s' did not match expected value of '%.*s'. Line()", buf.c_str(),(int) expected.size(), expected.data());
-            
+
             fprintf(stderr, "%s\n", s.c_str());
             assert(false);
         }
@@ -100,7 +100,7 @@ void assume_buffer(const PieceTree::Tree* tree, std::string_view expected)
     if (expected != buf)
     {
         size_t slen = snprintf(NULL, 0,"buffer string '%s' did not match expected value of '%.*s'. Line({})", buf.c_str(), (int) expected.size(), expected.data());
-        
+
          std::string s ;
         s.resize(slen);
          slen = snprintf(s.data(), s.size(),"buffer string '%s' did not match expected value of '%.*s'. Line({})", buf.c_str(), (int) expected.size(), expected.data());
@@ -558,6 +558,42 @@ void test9()
     assume_buffer(&tree, "Hello, World! My name is fredbuf.");
 }
 
+void test10()
+{
+
+    TreeBuilder builder;
+    std::string buf;
+    builder.accept("Hello, World!");
+    auto tree = builder.create();
+
+    {
+        auto it = begin(tree);
+        assert(*it == 'H');
+        assert(*it == 'H');
+        ++it;
+        assert(*it == 'e');
+        assert(*it == 'e');
+
+        auto it2 = begin(tree);
+        assert(it!=it2);
+        ++it2;
+        assert(it==it2);
+    }
+    {
+        auto it = rbegin(tree);
+        assert(*it == '!');
+        assert(*it == '!');
+        ++it;
+        assert(*it == 'd');
+        assert(*it == 'd');
+
+        auto it2 = rbegin(tree);
+        assert(it!=it2);
+        ++it2;
+        assert(it==it2);
+    }
+}
+
 int main()
 {
     test1();
@@ -569,4 +605,5 @@ int main()
     test7();
     test8();
     test9();
+    test10();
 }

@@ -18,7 +18,6 @@
 // that this version is based on immutable data structures to achieve fast undo/redo.
 namespace PieceTree
 {
-    //template<>
     using StorageTree = B_Tree<10>;
     
     struct UndoRedoEntry
@@ -100,12 +99,9 @@ namespace PieceTree
     // Indicates whether or not line was missing a CR (e.g. only a '\n' was at the end).
     enum class IncompleteCRLF : bool { No, Yes };
 
-    BufferCursor buffer_position(const BufferCollection* buffers, const Piece& piece, Length remainder);
-
     class Tree
     {
     public:
-        
         explicit Tree();
         explicit Tree(Buffers&& buffers);
 
@@ -177,22 +173,12 @@ namespace PieceTree
         static void line_end_crlf(CharOffset* offset, const BufferCollection* buffers, const StorageTree& root, const StorageTree& node, Line line);
         static Length accumulate_value(const BufferCollection* buffers, const Piece& piece, Line index);
         static Length accumulate_value_no_lf(const BufferCollection* buffers, const Piece& piece, Line index);
-        static void populate_from_node(std::string* buf, const BufferCollection* buffers, const StorageTree& node);
-        static void populate_from_node(std::string* buf, const BufferCollection* buffers, const StorageTree& node, Line line_index);
         static LFCount line_feed_count(const BufferCollection* buffers, BufferIndex index, const BufferCursor& start, const BufferCursor& end);
         static NodePosition node_at(const BufferCollection* buffers, StorageTree node, CharOffset off);
         //static BufferCursor buffer_position(const BufferCollection* buffers, const Piece& piece, Length remainder);
         static char char_at(const BufferCollection* buffers, const StorageTree& node, CharOffset offset);
         static Piece trim_piece_right(const BufferCollection* buffers, const Piece& piece, const BufferCursor& pos);
         static Piece trim_piece_left(const BufferCollection* buffers, const Piece& piece, const BufferCursor& pos);
-
-        struct ShrinkResult
-        {
-            Piece left;
-            Piece right;
-        };
-
-        static ShrinkResult shrink_piece(const BufferCollection* buffers, const Piece& piece, const BufferCursor& first, const BufferCursor& last);
 
         // Direct mutations.
         void assemble_line(std::string* buf, const StorageTree& node, Line line) const;
@@ -301,7 +287,7 @@ namespace PieceTree
         TreeWalker(const ReferenceSnapshot* snap, CharOffset offset = CharOffset{ });
         TreeWalker(const TreeWalker&) = delete;
 
-        char current();
+        char current() const;
         char next();
         void seek(CharOffset offset);
         bool exhausted() const;
@@ -314,12 +300,18 @@ namespace PieceTree
         // For Iterator-like behavior.
         TreeWalker& operator++()
         {
+            next();
             return *this;
         }
 
-        char operator*()
+        char operator*() const
         {
-            return next();
+            return current();
+        }
+        
+        bool operator==(const TreeWalker& other) const
+        {
+            return root.root_ptr() == other.root.root_ptr() && total_offset == other.total_offset;
         }
 
         struct StackEntry
@@ -348,7 +340,7 @@ namespace PieceTree
         ReverseTreeWalker(const ReferenceSnapshot* snap, CharOffset offset = CharOffset{ });
         ReverseTreeWalker(const TreeWalker&) = delete;
 
-        char current();
+        char current() const;
         char next();
         void seek(CharOffset offset);
         bool exhausted() const;
@@ -361,13 +353,20 @@ namespace PieceTree
         // For Iterator-like behavior.
         ReverseTreeWalker& operator++()
         {
+            next();
             return *this;
         }
 
         char operator*()
         {
-            return next();
+            return current();
         }
+        
+        bool operator==(const ReverseTreeWalker& other) const
+        {
+            return root.root_ptr() == other.root.root_ptr() && total_offset == other.total_offset;
+        }
+        
         struct StackEntry
         {
             const PieceTree::StorageTree::Node* node;
@@ -396,12 +395,27 @@ namespace PieceTree
         return TreeWalker{ &tree };
     }
 
+    inline ReverseTreeWalker rbegin(const Tree& tree)
+    {
+        return ReverseTreeWalker{ &tree, Offset{0}+retract(tree.length()) };
+    }
+
     constexpr WalkSentinel end(const Tree&)
     {
         return WalkSentinel{ };
     }
 
+    constexpr WalkSentinel rend(const Tree&)
+    {
+        return WalkSentinel{ };
+    }
+
     inline bool operator==(const TreeWalker& walker, WalkSentinel)
+    {
+        return walker.exhausted();
+    }
+
+    inline bool operator==(const ReverseTreeWalker& walker, WalkSentinel)
     {
         return walker.exhausted();
     }

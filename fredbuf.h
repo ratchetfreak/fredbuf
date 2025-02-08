@@ -308,12 +308,13 @@ namespace PieceTree
         // For Iterator-like behavior.
         TreeWalker& operator++()
         {
+            next();
             return *this;
         }
 
         char operator*()
         {
-            return next();
+            return current();
         }
     private:
         void populate_ptrs();
@@ -357,12 +358,13 @@ namespace PieceTree
         // For Iterator-like behavior.
         ReverseTreeWalker& operator++()
         {
+            next();
             return *this;
         }
 
         char operator*()
         {
-            return next();
+            return current();
         }
     private:
         void populate_ptrs();
