@@ -200,7 +200,7 @@ namespace PieceTree
     };
 
     #if 1
-    enum class MarkReason : size_t { None, Traverse, Split, Made, Collect };
+    enum class MarkReason : size_t { None, Traverse, Collect, Made, Skip };
     struct algo_marker
     {
         B_Tree<10>::NodePtr node;
