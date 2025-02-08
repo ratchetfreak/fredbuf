@@ -357,7 +357,6 @@ namespace PieceTree
             }
         }
 
-
         for(; child_it!=child_end; ++child_it)
         {
             resultch.push_back(*child_it);
@@ -1400,6 +1399,14 @@ namespace PieceTree
         return *first_ptr++;
     }
 
+    char TreeWalker::current() const
+    {
+        if (exhausted())
+            return '\0';
+
+        return *first_ptr;
+    }
+
 
     bool TreeWalker::exhausted() const
     {
@@ -1453,7 +1460,7 @@ namespace PieceTree
                 algo_mark(children[stack_entry.index]->shared_from_this(), Traverse);
                 sublen = subtreelen;
             }
-            
+
         }
         const StorageTree::LeafArray& children = std::get<StorageTree::LeafArray>(stack.back().node->children);
         algo_mark(stack.back().node->shared_from_this(), Collect);
@@ -1564,6 +1571,17 @@ namespace PieceTree
         // A dereference is the pointer value _before_ this actual pointer, just like
         // STL reverse iterator models.
         return *(--first_ptr);
+    }
+
+    char ReverseTreeWalker::current() const
+    {
+
+        //    populate_ptrs();
+            // If this is exhausted, we're done.
+        if (exhausted())
+            return '\0';
+
+        return *(first_ptr-1);
     }
 
     Length ReverseTreeWalker::remaining() const

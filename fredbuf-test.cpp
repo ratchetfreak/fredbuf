@@ -813,6 +813,43 @@ passages, and more recently with desktop publishing software like Aldus PageMake
 }
 #endif // TIMING_DATA
 
+void test10()
+{
+
+    TreeBuilder builder;
+    std::string buf;
+    builder.accept("Hello, World!");
+    auto tree = builder.create();
+
+    {
+        auto it = begin(tree);
+        assert(*it == 'H');
+        assert(*it == 'H');
+        ++it;
+        assert(*it == 'e');
+        assert(*it == 'e');
+
+        auto it2 = begin(tree);
+        assert(it!=it2);
+        ++it2;
+        assert(it==it2);
+    }
+    {
+        auto it = rbegin(tree);
+        assert(*it == '!');
+        assert(*it == '!');
+        ++it;
+        assert(*it == 'd');
+        assert(*it == 'd');
+
+        auto it2 = rbegin(tree);
+        assert(it!=it2);
+        ++it2;
+        assert(it==it2);
+    }
+}
+
+
 int main()
 {
     // Setup the scratch arenas.
@@ -832,6 +869,8 @@ int main()
     test7();
     test8();
     test9();
+    test10();
+
 
 #ifdef TIMING_DATA
     time_buffer();
