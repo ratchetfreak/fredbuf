@@ -121,18 +121,12 @@ namespace PieceTree
     template<size_t MaxChildren>
     B_Tree<MaxChildren> B_Tree<MaxChildren>::insert(const NodeData& x, Offset at, BufferCollection* buffers) const
     {
-        //TODO(ratchetfreak) : change result to be 1 or more ChildPtrs which is exactly the x node with the insert
         const Node* root = root_node.get();
         auto result = insertInto(root, x, Editor::distance(Offset(0), at), buffers);
         size_t newNumChildren = result.nodes.size();
         if(newNumChildren > 1)
         {
-
-
             NodePtr new_root = construct_internal(result.nodes, 0, newNumChildren);
-
-
-
             return B_Tree<MaxChildren>(new_root);
         }
         else
@@ -598,12 +592,12 @@ namespace PieceTree
     template<size_t MaxChildren>
     B_Tree<MaxChildren>::ChildVector B_Tree<MaxChildren>::remove_from(const Node* a, const Node* b, const Node* c, Length at, Length len, BufferCollection* buffers) const
     {
-
-        if(a) algo_mark(a->shared_from_this(), Traverse);
-        if(b) algo_mark(b->shared_from_this(), Traverse);
-        if(c) algo_mark(c->shared_from_this(), Traverse);
         // at least one of a and c should not participate in the remove
         // that way the result is always big enough to make at least 1 node
+        
+        if(a)algo_mark(a->shared_from_this(), Collect);
+        if(b)algo_mark(b->shared_from_this(), Collect);
+        if(c)algo_mark(c->shared_from_this(), Collect);
 
         if(a->isLeaf())
         {
@@ -658,6 +652,7 @@ namespace PieceTree
                         recC->subTreeLength();
             }
             //now allChildren[i] is the first node that needs removing anything
+            
             if(recA)
             {
                 offset = offset - recA->subTreeLength();
@@ -672,6 +667,8 @@ namespace PieceTree
             Length to_remove_from_first_found = aplusbplusc - offset;
             i++;
             ChildVector res;
+            
+            algo_mark(recC, Traverse);
 
             if(len < to_remove_from_first_found)
             {
@@ -696,9 +693,10 @@ namespace PieceTree
                     recB = recC;
                     recC = allChildren[i];
                     i++;
+                    algo_mark(recC, Traverse);
 
                 }
-                 res = remove_from(recA.get(), recB.get(), recC.get(), offset, len, buffers);
+                res = remove_from(recA.get(), recB.get(), recC.get(), offset, len, buffers);
             }
             else
             {
@@ -708,6 +706,7 @@ namespace PieceTree
                         allChildren[i]->subTreeLength() < to_remove_from_rest;i++)
                 {
                     to_remove_from_rest = to_remove_from_rest - allChildren[i]->subTreeLength();
+                    algo_mark(allChildren[i], Skip);
                 }
 
 
@@ -738,6 +737,8 @@ namespace PieceTree
                     recB = recC;
                     recC = allChildren[i];
                     i++;
+                    
+                    algo_mark(recC, Traverse);
                 }
                 //recA and recB might still be nullptr
                 while(!recA)
@@ -759,6 +760,8 @@ namespace PieceTree
                     recB = recC;
                     recC = allChildren[i];
                     i++;
+                    
+                    algo_mark(recC, Traverse);
 
                 }
                 res = remove_from(recA.get(), recB.get(), recC.get(), offset, to_remove_from_first_found + to_remove_from_rest, buffers);
@@ -865,19 +868,41 @@ namespace PieceTree
         return root_node.get();
     }
 
-    void foo(){
-        B_Tree<10> tree{};
-        Offset at={
-
-        };
-        NodeData data={
-            .piece = {
-                .length =Length{ 5}
+    template<size_t MaxChildren>
+    void satisfies_btree_invariant(const B_Tree<MaxChildren>& root)
+    {
+        // 1. every node other than root has >= MaxChildren/2 children 
+        // 1.5. nodes are hardcoded to contain <= MaxChildren
+        // 2. all leafNodes are at the same depth
+        
+        typedef B_Tree<MaxChildren>::NodePtr NPtr;
+        typedef B_Tree<MaxChildren>::ChildArray  ChArr;
+        std::vector<NPtr> layer;
+        std::vector<NPtr> next_layer;
+        
+        if(root.is_empty() || root.root_ptr()->isLeaf())
+            return;
+        
+        auto children = std::get<ChArr>(root.root_ptr()->children);
+        next_layer.assign(children.begin(), children.begin()+root.root_ptr()->childCount);
+        while(!next_layer.front()->isLeaf())
+        {
+            layer = std::move(next_layer);
+            next_layer.clear();
+            for(auto nodeIt = layer.begin(); nodeIt != layer.end();++nodeIt)
+            {
+                assert(!(*nodeIt)->isLeaf());
+                assert((*nodeIt)->childCount >= MaxChildren/2);
+                auto node_children = std::get<ChArr>((*nodeIt)->children);
+                next_layer.insert(next_layer.end(), node_children.begin(), node_children.begin()+(*nodeIt)->childCount);
             }
-        };
-        tree.insert(data, at, nullptr);
-
-        //tree.remove(at);
+        }
+        layer = std::move(next_layer);
+        for(auto nodeIt = layer.begin(); nodeIt != layer.end();++nodeIt)
+        {
+            assert((*nodeIt)->isLeaf());
+            assert((*nodeIt)->childCount >= MaxChildren/2);
+        }
     }
 
 
@@ -1195,6 +1220,7 @@ namespace PieceTree
         assert(not txt.empty());
         ScopeGuard guard{ [&] {
             compute_buffer_meta();
+            satisfies_btree_invariant(root);
         } };
         end_last_insert = extend(offset, txt.size());
 
@@ -1213,6 +1239,7 @@ namespace PieceTree
         assert(rep(count) != 0 and not root.is_empty());
         ScopeGuard guard{ [&] {
             compute_buffer_meta();
+            satisfies_btree_invariant(root);
         } };
         root = root.remove(offset, count, &buffers);
     }

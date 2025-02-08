@@ -816,10 +816,11 @@ passages, and more recently with desktop publishing software like Aldus PageMake
 void test10()
 {
 
-    TreeBuilder builder;
-    std::string buf;
-    builder.accept("Hello, World!");
-    auto tree = builder.create();
+    auto scratch = Arena::scratch_begin(Arena::no_conflicts);
+    Arena::Arena* arena = Arena::alloc(Arena::default_params);
+    TreeBuilder builder = tree_builder_start(arena);
+    tree_builder_accept(arena, &builder, str8_mut(str8_literal("Hello, World!")));
+    Tree* tree = tree_builder_finish(&builder);
 
     {
         auto it = begin(tree);
@@ -847,6 +848,30 @@ void test10()
         ++it2;
         assert(it==it2);
     }
+    release_tree(tree);
+    Arena::scratch_end(scratch);
+}
+
+void test11()
+{
+    auto scratch = Arena::scratch_begin(Arena::no_conflicts);
+    Arena::Arena* arena = Arena::alloc(Arena::default_params);
+    TreeBuilder builder = tree_builder_start(arena);
+    tree_builder_accept(arena, &builder, str8_mut(str8_literal("Hello, World!")));
+
+    TreeBuilder builder;
+    std::string buf;
+    for(int i = 0; i< 1000; i++)
+        tree_builder_accept(arena, &builder, str8_mut(str8_literal("Hello, World!")));
+        
+    Tree* tree = tree_builder_finish(&builder);
+    
+    
+    tree.remove(CharOffset{ 14 }, retract(tree.length(),  14*2 ));
+    assume_buffer(&tree, "Hello, World!H!Hello, World!");
+
+    release_tree(tree);
+    Arena::scratch_end(scratch);
 }
 
 
@@ -870,7 +895,7 @@ int main()
     test8();
     test9();
     test10();
-
+    test11();
 
 #ifdef TIMING_DATA
     time_buffer();
