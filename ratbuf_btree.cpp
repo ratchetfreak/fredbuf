@@ -1,4 +1,3 @@
-
 #include "ratbuf.h"
 
 
@@ -267,7 +266,6 @@ namespace PieceTree
     B_Tree<MaxChildren>::TreeManipResult B_Tree<MaxChildren>::insertInto_leaf(const Node* node, const NodeData& x, Length at, BufferCollection* buffers) const
     {
         if(node)algo_mark(node->shared_from_this(), Traverse);
-        //TODO(ratchetfreak) : change result to be 1 or more ChildPtrs which is exactly the x node with the insert
         if(node==nullptr)
         {
             B_Tree<MaxChildren>::TreeManipResult res;
@@ -321,7 +319,6 @@ namespace PieceTree
             };
             resultch.push_back(first);
 
-
             resultch.push_back(x);
 
             NodeData second = NodeData
@@ -331,8 +328,6 @@ namespace PieceTree
 
             resultch.push_back(second);
             ++child_it;
-
-
         }
         else
         {
@@ -345,9 +340,24 @@ namespace PieceTree
             }
             else
             {
-                resultch.push_back(*child_it);
-                ++child_it;
-                resultch.push_back(x);
+                auto node_data = *child_it;
+                if(node_data.piece.index == x.piece.index && node_data.piece.last == x.piece.first)
+                {
+                    Piece old_piece = node_data.piece;
+                    NodeData d = x;
+                    Piece &new_piece = d.piece;
+                    new_piece.first = old_piece.first;
+                    new_piece.newline_count = new_piece.newline_count + old_piece.newline_count;
+                    new_piece.length = new_piece.length + old_piece.length;
+                    resultch.push_back(d);
+                    ++child_it;
+                }
+                else
+                {
+                    resultch.push_back(*child_it);
+                    ++child_it;
+                    resultch.push_back(x);
+                }
             }
         }
 
@@ -464,7 +474,25 @@ namespace PieceTree
 
 
         ChildVector result;
-        if(allChildren.size() > MaxChildren*2)
+        if(allChildren.size() > MaxChildren*3)
+        {
+            
+            size_t from = 0;
+            size_t perChild = allChildren.size()/4;
+
+            result.push_back(construct_leaf(allChildren, from, from+perChild));
+            from+=perChild;
+            if(allChildren.size()%4 > 1)
+            {
+                perChild+=1;
+            }
+            result.push_back(construct_leaf(allChildren, from, from+perChild));
+            from+=perChild;
+            result.push_back(construct_leaf(allChildren, from, from+perChild));
+            from+=perChild;
+            result.push_back(construct_leaf(allChildren, from, allChildren.size()));
+        }
+        else if(allChildren.size() > MaxChildren*2)
         {
             size_t from = 0;
             size_t perChild = allChildren.size()/3;
@@ -556,7 +584,6 @@ namespace PieceTree
             for(; child_it!=insertChItEnd;  ++child_it)
             {
                 resultch.push_back(*child_it);
-
             }
 
             if(resultch.size() > MaxChildren)
@@ -583,8 +610,6 @@ namespace PieceTree
                 manipresult.nodes.push_back(std::move(newChild));
                 return manipresult;
             }
-
-
         }
         // return {};
     }
@@ -632,7 +657,6 @@ namespace PieceTree
             NodePtr recC = nullptr;
 
             Length offset = at;
-
 
             Length aplusbplusc {0};
             int i = 0;
@@ -709,7 +733,6 @@ namespace PieceTree
                     algo_mark(allChildren[i], Skip);
                 }
 
-
                 //now allChildren[i] is the last child to remove anything from
 
                 if(i >= totalChildCount && !recA)
@@ -777,7 +800,24 @@ namespace PieceTree
             }
 
             ChildVector result;
-            if(resultChildren.size() > MaxChildren*2)
+            if(resultChildren.size() > MaxChildren*3)
+            {
+                size_t from = 0;
+                size_t perChild = resultChildren.size()/4;
+
+                result.push_back(construct_internal(resultChildren, from, from+perChild));
+                from+=perChild;
+                if(resultChildren.size()%4 > 1)
+                {
+                    perChild+=1;
+                }
+                result.push_back(construct_internal(resultChildren, from, from+perChild));
+                from+=perChild;
+                result.push_back(construct_internal(resultChildren, from, from+perChild));
+                from+=perChild;
+                result.push_back(construct_internal(resultChildren, from, resultChildren.size()));
+            }
+            else if(resultChildren.size() > MaxChildren*2)
             {
                 size_t from = 0;
                 size_t perChild = resultChildren.size()/3;
@@ -809,7 +849,6 @@ namespace PieceTree
 
             return result;
         }
-
     }
 
     template<size_t MaxChildren>
@@ -868,6 +907,7 @@ namespace PieceTree
         return root_node.get();
     }
 
+#ifdef TEXTBUF_DEBUG
     template<size_t MaxChildren>
     void satisfies_btree_invariant(const B_Tree<MaxChildren>& root)
     {
@@ -904,7 +944,7 @@ namespace PieceTree
             assert((*nodeIt)->childCount >= MaxChildren/2);
         }
     }
-
+#endif
 
     Tree::Tree():
         buffers{ }
@@ -927,9 +967,7 @@ namespace PieceTree
         last_insert = { };
 
         const auto buf_count = buffers.orig_buffers.size();
-        Length offset = { };
         std::vector<NodeData> leafNodes;
-        std::vector<Length> offsets;
 
         for (size_t i = 0; i < buf_count; ++i)
         {
@@ -949,10 +987,7 @@ namespace PieceTree
                 // Note: the number of newlines
                 .newline_count = LFCount{ rep(last_line) }
             };
-            //root = root.insert({ piece }, offset);
-            offset = offset + piece.length;
             leafNodes.push_back({piece});
-            offsets.push_back(offset);
         }
         root = root.construct_from(leafNodes);
 
@@ -1130,6 +1165,8 @@ namespace PieceTree
         size_t node_start_offset = 0;
         size_t newline_count = 0;
         const StorageTree::Node* node = tree.root_ptr();
+        
+        
         while(!node->isLeaf())
         {
             auto children = std::get<StorageTree::ChildArray>(node->children);
@@ -1138,6 +1175,11 @@ namespace PieceTree
             {
                 if(rep(distance(Offset{node_start_offset}, off)) < rep(node->offsets[i]))
                 {
+                    if(i>0)
+                    {
+                        node_start_offset += rep(node->offsets[i-1]);
+                        newline_count += rep(node->lineFeeds[i-1]);
+                    }
                     node = children[i].get();
                     break;
                 }
@@ -1158,6 +1200,12 @@ namespace PieceTree
             }
             node_start_offset += rep(children[i].piece.length);
             newline_count += rep(children[i].piece.newline_count);
+        }
+        if(i>=node->childCount)
+        {
+            i--;
+            node_start_offset -= rep(children[i].piece.length);
+            newline_count -= rep(children[i].piece.newline_count);
         }
         Piece result_piece =  children[i].piece;
         //node = children[i].get();
@@ -1220,7 +1268,9 @@ namespace PieceTree
         assert(not txt.empty());
         ScopeGuard guard{ [&] {
             compute_buffer_meta();
+#ifdef TEXTBUF_DEBUG
             satisfies_btree_invariant(root);
+#endif
         } };
         end_last_insert = extend(offset, txt.size());
 
@@ -1239,11 +1289,12 @@ namespace PieceTree
         assert(rep(count) != 0 and not root.is_empty());
         ScopeGuard guard{ [&] {
             compute_buffer_meta();
+#ifdef TEXTBUF_DEBUG
             satisfies_btree_invariant(root);
+#endif
         } };
         root = root.remove(offset, count, &buffers);
     }
-
 
     // Fetches the length of the piece starting from the first line to 'index' or to the end of
     // the piece.
@@ -1271,7 +1322,6 @@ namespace PieceTree
         return Length{ last - first };
     }
 
-
     template <Tree::Accumulator accumulate>
     void Tree::line_start(CharOffset* offset, const BufferCollection* buffers, const PieceTree::StorageTree& node, Line line)
     {
@@ -1281,23 +1331,35 @@ namespace PieceTree
         auto line_index = rep(retract(line));
 
         const StorageTree::Node* n = node.root_ptr();
+        
         while(!n->isLeaf())
         {
             const StorageTree::ChildArray& children = std::get<StorageTree::ChildArray>(n->children);
             int i;
             for(i = 0; i < n->childCount;i++)
             {
-                if(line_index  <= rep(n->lineFeeds[i]))
+                if(line_index <= rep(n->lineFeeds[i]))
                 {
+                    if(i>0)
+                    {
+                        line_index -= rep(n->lineFeeds[i-1]);
+                        *offset = *offset + (n->offsets[i-1]);
+                    }
                     n = children[i].get();
+                    i=0;
                     break;
                 }
-                line_index -= rep(n->lineFeeds[i]);
-
-                *offset = *offset + (n->offsets[i]);
+                //line_index -= rep(n->lineFeeds[i]);
+                //*offset = *offset + (n->offsets[i]);
+                
             }
-            if(i==n->childCount)
-                return;
+            if(i==n->childCount){
+                i--;
+                line_index -= rep(n->lineFeeds[i-1]);
+                *offset = *offset + (n->offsets[i-1]);
+
+                n = children[i].get();
+            }
         }
         const StorageTree::LeafArray& children = std::get<StorageTree::LeafArray>(n->children);
         int i;
@@ -1308,10 +1370,9 @@ namespace PieceTree
                 break;
             }
             line_index -= rep(children[i].piece.newline_count);
-
             *offset = *offset + children[i].piece.length;
         }
-        if(i==children.size()){
+        if(i==n->childCount){
             return;
         }
 
@@ -1322,7 +1383,6 @@ namespace PieceTree
             len = len + (*accumulate)(buffers, piece, Line{ line_index - 1 });
         }
         *offset = *offset + len;
-
     }
 
     // Fetches the length of the piece starting from the first line to 'index' or to the end of
@@ -1357,7 +1417,6 @@ namespace PieceTree
         compute_buffer_meta(&meta, dt);
     }
 
-
     ReferenceSnapshot::ReferenceSnapshot(const Tree* tree):
         root{ tree->root },
         meta{ tree->meta },
@@ -1372,13 +1431,11 @@ namespace PieceTree
         compute_buffer_meta(&meta, dt);
     }
 
-
     void TreeBuilder::accept(std::string_view txt)
     {
         populate_line_starts(&scratch_starts, txt);
         buffers.push_back(std::make_shared<CharBuffer>(std::string{ txt }, scratch_starts));
     }
-
 
     TreeWalker::TreeWalker(const Tree* tree, CharOffset offset):
         buffers{ &tree->buffers },
@@ -1430,10 +1487,8 @@ namespace PieceTree
     {
         if (exhausted())
             return '\0';
-
         return *first_ptr;
     }
-
 
     bool TreeWalker::exhausted() const
     {
@@ -1464,7 +1519,7 @@ namespace PieceTree
         total_offset = offset;
 
         Length accumulated {0};
-        if(rep(offset) > rep(stack.back().node->subTreeLength()))
+        if(rep(offset) >= rep(stack.back().node->subTreeLength()))
         {
             stack.clear();
             return;
@@ -1487,7 +1542,6 @@ namespace PieceTree
                 algo_mark(children[stack_entry.index]->shared_from_this(), Traverse);
                 sublen = subtreelen;
             }
-
         }
         const StorageTree::LeafArray& children = std::get<StorageTree::LeafArray>(stack.back().node->children);
         algo_mark(stack.back().node->shared_from_this(), Collect);
@@ -1502,6 +1556,13 @@ namespace PieceTree
             }
             sublen = subtreelen;
         }
+        if(stack.back().index== stack.back().node->childCount)
+        {
+            stack.clear();
+            first_ptr=nullptr;
+            last_ptr=nullptr;
+            return;
+        }
         auto& piece = children[stack.back().index++].piece;
         auto* buffer = buffers->buffer_at(piece.index);
         auto first_offset = buffers->buffer_offset(piece.index, piece.first);
@@ -1509,7 +1570,6 @@ namespace PieceTree
         first_ptr = buffer->buffer.data() + rep(first_offset) + rep(offset) - rep(accumulated);
         last_ptr = buffer->buffer.data() + rep(last_offset);
     }
-
 
     void TreeWalker::fast_forward_to(CharOffset offset)
     {
@@ -1541,15 +1601,12 @@ namespace PieceTree
         auto last_offset = buffers->buffer_offset(piece.index, piece.last);
         first_ptr = buffer->buffer.data() + rep(first_offset);
         last_ptr = buffer->buffer.data() + rep(last_offset);
-
-
     }
 
     Length TreeWalker::remaining() const
     {
         return meta.total_content_length - distance(CharOffset{}, total_offset);
     }
-
 
     ReverseTreeWalker::ReverseTreeWalker(const Tree* tree, CharOffset offset):
         buffers{ &tree->buffers },
@@ -1602,7 +1659,6 @@ namespace PieceTree
 
     char ReverseTreeWalker::current() const
     {
-
         //    populate_ptrs();
             // If this is exhausted, we're done.
         if (exhausted())
@@ -1633,7 +1689,6 @@ namespace PieceTree
         }
         return true;
     }
-
 
     void ReverseTreeWalker::populate_ptrs()
     {
@@ -1722,7 +1777,6 @@ namespace PieceTree
     }
 }
 
-
 void print_tree(const PieceTree::StorageTree::Node& root, const PieceTree::Tree* tree, int level , size_t node_offset )
 {
 
@@ -1734,7 +1788,6 @@ void print_tree(const PieceTree::StorageTree::Node& root, const PieceTree::Tree*
         for(int i = 0; i < root.childCount;i++){
             print_piece(std::get<PieceTree::StorageTree::LeafArray>(root.children)[i].piece, tree, level+1);
         }
-
     }
     else
     {
