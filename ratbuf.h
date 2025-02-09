@@ -16,7 +16,7 @@
 // This is a C++ implementation of the textbuf data structure described in
 // https://code.visualstudio.com/blogs/2018/03/23/text-buffer-reimplementation. The differences are
 // that this version is based on immutable data structures to achieve fast undo/redo.
-namespace PieceTree
+namespace RatchetPieceTree
 {
     using StorageTree = B_Tree<10>;
     
@@ -37,7 +37,7 @@ namespace PieceTree
     struct NodePosition
     {
         // Piece Index
-        const PieceTree::NodeData* node = nullptr;
+        const RatchetPieceTree::NodeData* node = nullptr;
         // Remainder in current piece.
         Length remainder = { };
         // Node start offset in document.
@@ -191,7 +191,7 @@ namespace PieceTree
         BufferCollection buffers;
         //Buffers buffers;
         //CharBuffer mod_buffer;
-        PieceTree::StorageTree root;
+        RatchetPieceTree::StorageTree root;
         LineStarts scratch_starts;
         BufferCursor last_insert;
         // Note: This is absolute position.  Initialize to nonsense value.
@@ -316,7 +316,7 @@ namespace PieceTree
 
         struct StackEntry
         {
-            const PieceTree::StorageTree::Node* node;
+            const RatchetPieceTree::StorageTree::Node* node;
             size_t index = 0;
         };
         std::vector<StackEntry> stack;
@@ -369,7 +369,7 @@ namespace PieceTree
         
         struct StackEntry
         {
-            const PieceTree::StorageTree::Node* node;
+            const RatchetPieceTree::StorageTree::Node* node;
             size_t index = 0;
         };
         std::vector<StackEntry> stack;
@@ -432,4 +432,4 @@ namespace PieceTree
     
     
 
-} // namespace PieceTree
+} // namespace RatchetPieceTree

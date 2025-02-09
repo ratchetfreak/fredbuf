@@ -13,9 +13,9 @@
 #include "enum-utils.h"
 #include "scope-guard.h"
 
-void print_tree(const PieceTree::StorageTree::Node& root, const PieceTree::Tree* tree, int level = 0, size_t node_offset = 0);
+void print_tree(const RatchetPieceTree::StorageTree::Node& root, const RatchetPieceTree::Tree* tree, int level = 0, size_t node_offset = 0);
 
-namespace PieceTree
+namespace RatchetPieceTree
 {
     std::vector<algo_marker> algorithm;
     constexpr LFCount operator+(LFCount lhs, LFCount rhs)
@@ -23,7 +23,7 @@ namespace PieceTree
         return LFCount{ rep(lhs) + rep(rhs) };
     }
 
-    PieceTree::LFCount tree_lf_count(const StorageTree& root)
+    RatchetPieceTree::LFCount tree_lf_count(const StorageTree& root)
     {
         if (root.is_empty())
             return { };
@@ -48,7 +48,7 @@ namespace PieceTree
             }
         }
 
-        PieceTree::Length tree_length(const StorageTree& root)
+        RatchetPieceTree::Length tree_length(const StorageTree& root)
         {
             if (root.is_empty())
                 return { };
@@ -1104,7 +1104,7 @@ namespace PieceTree
         return CharOffset{ rep(starts[rep(cursor.line)]) + rep(cursor.column) };
     }
 
-    void print_piece(const PieceTree::Piece& piece, const PieceTree::Tree* tree, int level)
+    void print_piece(const RatchetPieceTree::Piece& piece, const RatchetPieceTree::Tree* tree, int level)
     {
         const char* levels = "|||||||||||||||||||||||||||||||";
         printf("%.*s  :idx{%zd}, first{l{%zd}, c{%zd}}, last{l{%zd}, c{%zd}}, len{%zd}, lf{%zd}\n",
@@ -1116,7 +1116,7 @@ namespace PieceTree
         auto offset = tree->buffers.buffer_offset(piece.index, piece.first);
         printf("%.*sPiece content: %.*s\n", level, levels, static_cast<int>(piece.length), buffer->buffer.data() + rep(offset));
     }
-    void print_tree(const PieceTree::Tree& tree)
+    void print_tree(const RatchetPieceTree::Tree& tree)
     {
         ::print_tree(*(tree.root.root_ptr()), &tree);
     }
@@ -1225,7 +1225,7 @@ namespace PieceTree
     }
     void Tree::compute_buffer_meta()
     {
-        ::PieceTree::compute_buffer_meta(&meta, root);
+        ::RatchetPieceTree::compute_buffer_meta(&meta, root);
     }
 
 
@@ -1323,7 +1323,7 @@ namespace PieceTree
     }
 
     template <Tree::Accumulator accumulate>
-    void Tree::line_start(CharOffset* offset, const BufferCollection* buffers, const PieceTree::StorageTree& node, Line line)
+    void Tree::line_start(CharOffset* offset, const BufferCollection* buffers, const RatchetPieceTree::StorageTree& node, Line line)
     {
         if (node.is_empty())
             return;
@@ -1480,7 +1480,14 @@ namespace PieceTree
                 return next();
         }
         total_offset = total_offset + Length{ 1 };
-        return *first_ptr++;
+        auto result = *first_ptr++;
+        if (first_ptr == last_ptr)
+        {
+            populate_ptrs();
+            // If this is exhausted, we're done.
+            
+        }
+        return result;
     }
 
     char TreeWalker::current() const
@@ -1777,7 +1784,7 @@ namespace PieceTree
     }
 }
 
-void print_tree(const PieceTree::StorageTree::Node& root, const PieceTree::Tree* tree, int level , size_t node_offset )
+void print_tree(const RatchetPieceTree::StorageTree::Node& root, const RatchetPieceTree::Tree* tree, int level , size_t node_offset )
 {
 
     const char* levels = "|||||||||||||||||||||||||||||||";
@@ -1786,31 +1793,31 @@ void print_tree(const PieceTree::StorageTree::Node& root, const PieceTree::Tree*
     //printf("%.*s  :\n",level, levels);
     if(root.isLeaf()){
         for(int i = 0; i < root.childCount;i++){
-            print_piece(std::get<PieceTree::StorageTree::LeafArray>(root.children)[i].piece, tree, level+1);
+            print_piece(std::get<RatchetPieceTree::StorageTree::LeafArray>(root.children)[i].piece, tree, level+1);
         }
     }
     else
     {
         for(int i = 0; i < root.childCount;i++){
-             PieceTree::StorageTree::NodePtr childptr = std::get<PieceTree::StorageTree::ChildArray>(root.children)[i];
-            PieceTree::Length sublen = root.offsets[i];
+             RatchetPieceTree::StorageTree::NodePtr childptr = std::get<RatchetPieceTree::StorageTree::ChildArray>(root.children)[i];
+            RatchetPieceTree::Length sublen = root.offsets[i];
             printf("%p, %d,", childptr.get(), (int)rep(sublen));
         }
         printf("\n");
         for(int i = 0; i < root.childCount;i++){
-             PieceTree::StorageTree::NodePtr childptr = std::get<PieceTree::StorageTree::ChildArray>(root.children)[i];
+             RatchetPieceTree::StorageTree::NodePtr childptr = std::get<RatchetPieceTree::StorageTree::ChildArray>(root.children)[i];
 
-            PieceTree::Length sublen = root.offsets[i];
+            RatchetPieceTree::Length sublen = root.offsets[i];
             print_tree(*childptr , tree, level + 1, node_offset+rep(sublen));
         }
     }
     //printf("%.*sleft_len{%zd}, left_lf{%zd}, node_offset{%zd}\n", level, levels, rep(root.root().left_subtree_length), rep(root.root().left_subtree_lf_count), this_offset);
 }
 
-void print_buffer(const PieceTree::Tree* tree)
+void print_buffer(const RatchetPieceTree::Tree* tree)
 {
     printf("--- Entire Buffer ---\n");
-    PieceTree::TreeWalker walker{ tree };
+    RatchetPieceTree::TreeWalker walker{ tree };
     std::string buf;
     while (not walker.exhausted())
     {

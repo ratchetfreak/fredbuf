@@ -11,7 +11,7 @@
 #include "types.h"
 
 
-namespace PieceTree
+namespace RatchetPieceTree
 {
 
     struct BufferCollection;
@@ -45,18 +45,18 @@ namespace PieceTree
 
     struct Piece
     {
-        BufferIndex index = { }; // Index into a buffer in PieceTree.  This could be an immutable buffer or the mutable buffer.
+        BufferIndex index = { }; // Index into a buffer in RatchetPieceTree.  This could be an immutable buffer or the mutable buffer.
         BufferCursor first = { };
         BufferCursor last = { };
         Length length = { };
         LFCount newline_count = { };
     };
 
-    using Offset = PieceTree::CharOffset;
+    using Offset = RatchetPieceTree::CharOffset;
 
     struct NodeData
     {
-        PieceTree::Piece piece;
+        RatchetPieceTree::Piece piece;
 
     };
 
