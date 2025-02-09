@@ -8,6 +8,7 @@
 #if 1
 #include "ratbuf.h"
 #include "ratbuf_btree.cpp"
+#define PieceTree RatchetPieceTree 
 #else
 #include "fredbuf.cpp"
 #endif
@@ -819,7 +820,9 @@ void test10()
     auto scratch = Arena::scratch_begin(Arena::no_conflicts);
     Arena::Arena* arena = Arena::alloc(Arena::default_params);
     TreeBuilder builder = tree_builder_start(arena);
-    tree_builder_accept(arena, &builder, str8_mut(str8_literal("Hello, World!")));
+    tree_builder_accept(arena, &builder, str8_mut(str8_literal("He")));
+    tree_builder_accept(arena, &builder, str8_mut(str8_literal("llo, Worl")));
+    tree_builder_accept(arena, &builder, str8_mut(str8_literal("d!")));
     Tree* tree = tree_builder_finish(&builder);
 
     {
@@ -829,10 +832,13 @@ void test10()
         ++it;
         assert(*it == 'e');
         assert(*it == 'e');
+        ++it;
+        assert(*it == 'l');
+        assert(*it == 'l');
 
         auto it2 = begin(tree);
         assert(it!=it2);
-        ++it2;
+        ++it2;++it2;
         assert(it==it2);
     }
     {
@@ -842,10 +848,13 @@ void test10()
         ++it;
         assert(*it == 'd');
         assert(*it == 'd');
+        ++it;
+        assert(*it == 'l');
+        assert(*it == 'l');
 
         auto it2 = rbegin(tree);
         assert(it!=it2);
-        ++it2;
+        ++it2;++it2;
         assert(it==it2);
     }
     release_tree(tree);
