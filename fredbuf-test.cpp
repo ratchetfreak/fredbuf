@@ -6,6 +6,7 @@
 #if 1
 #include "ratbuf.h"
 #include "ratbuf_btree.cpp"
+#define PieceTree RatchetPieceTree 
 #else
 #include "fredbuf.cpp"
 #endif
@@ -563,7 +564,9 @@ void test10()
 
     TreeBuilder builder;
     std::string buf;
-    builder.accept("Hello, World!");
+    builder.accept("He");
+    builder.accept("llo, Worl");
+    builder.accept("d!");
     auto tree = builder.create();
 
     {
@@ -573,10 +576,13 @@ void test10()
         ++it;
         assert(*it == 'e');
         assert(*it == 'e');
+        ++it;
+        assert(*it == 'l');
+        assert(*it == 'l');
 
         auto it2 = begin(tree);
         assert(it!=it2);
-        ++it2;
+        ++it2;++it2;
         assert(it==it2);
     }
     {
@@ -586,10 +592,13 @@ void test10()
         ++it;
         assert(*it == 'd');
         assert(*it == 'd');
+        ++it;
+        assert(*it == 'l');
+        assert(*it == 'l');
 
         auto it2 = rbegin(tree);
         assert(it!=it2);
-        ++it2;
+        ++it2;++it2;
         assert(it==it2);
     }
 }

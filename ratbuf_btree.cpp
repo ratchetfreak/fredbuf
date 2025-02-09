@@ -1656,12 +1656,18 @@ namespace RatchetPieceTree
             if (first_ptr == last_ptr)
                 return next();
         }
+        
         // Since CharOffset is unsigned, this will end up wrapping, both 'exhausted' and
         // 'remaining' will return 'true' and '0' respectively.
         total_offset = retract(total_offset);
         // A dereference is the pointer value _before_ this actual pointer, just like
         // STL reverse iterator models.
-        return *(--first_ptr);
+        auto result = *(--first_ptr);
+        if (first_ptr == last_ptr)
+        {
+            populate_ptrs();
+        }
+        return result;
     }
 
     char ReverseTreeWalker::current() const
