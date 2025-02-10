@@ -17,12 +17,17 @@ void print_tree(const RatchetPieceTree::StorageTree::Node& root, const RatchetPi
 
 namespace RatchetPieceTree
 {
+#ifdef LOG_ALGORITHM
     std::vector<algo_marker> algorithm;
     constexpr LFCount operator+(LFCount lhs, LFCount rhs)
     {
         return LFCount{ rep(lhs) + rep(rhs) };
     }
-
+#endif
+#ifdef COUNT_ALLOC
+     size_t alloc_count;
+     size_t dealloc_count;
+#endif
     RatchetPieceTree::LFCount tree_lf_count(const StorageTree& root)
     {
         if (root.is_empty())
@@ -347,7 +352,7 @@ namespace RatchetPieceTree
                     NodeData d = x;
                     Piece &new_piece = d.piece;
                     new_piece.first = old_piece.first;
-                    new_piece.newline_count = new_piece.newline_count + old_piece.newline_count;
+                    new_piece.newline_count = LFCount{rep(new_piece.newline_count) + rep(old_piece.newline_count)};
                     new_piece.length = new_piece.length + old_piece.length;
                     resultch.push_back(d);
                     ++child_it;
@@ -867,7 +872,7 @@ namespace RatchetPieceTree
             new_left_children[i] =data[begin+i];
             acc = acc + data[begin+i].piece.length;
             new_left_offsets[i] = acc;
-            linefeed = linefeed + data[begin+i].piece.newline_count;
+            linefeed =LFCount {rep(linefeed) + rep(data[begin+i].piece.newline_count)};
             new_left_linefeed[i] = linefeed;
         }
         auto result = std::make_shared<Node>(new_left_children, new_left_offsets, new_left_linefeed, end-begin);
@@ -891,7 +896,7 @@ namespace RatchetPieceTree
             new_left_children[i] =data[begin+i];
              acc = acc + data[begin+i]->subTreeLength();
             new_left_offsets[i] = acc;
-            linefeed = linefeed + data[begin+i]->subTreeLineFeeds();
+            linefeed =LFCount {rep(linefeed) + rep(data[begin+i]->subTreeLineFeeds())};
             new_left_linefeed[i] = linefeed;
 
         }

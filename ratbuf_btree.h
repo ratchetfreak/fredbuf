@@ -14,6 +14,30 @@
 namespace RatchetPieceTree
 {
 
+#ifdef LOG_ALGORITHM
+    enum class MarkReason : size_t { None, Traverse, Collect, Made, Skip };
+    struct algo_marker
+    {
+        B_Tree<10>::NodePtr node;
+        MarkReason reason;
+    };
+    extern std::vector<algo_marker> algorithm;
+
+#define algo_mark(node, reason) algorithm.push_back({node, MarkReason::reason})
+#else
+#define algo_mark(node, reason) do{}while(0)
+#endif
+
+#ifdef COUNT_ALLOC
+    extern size_t alloc_count;
+    extern size_t dealloc_count;
+#define NEW_NODE_ALLOC() alloc_count++
+#define NEW_NODE_DEALLOC() dealloc_count++
+#else
+#define NEW_NODE_ALLOC() do{}while(0)
+#define NEW_NODE_DEALLOC() do{}while(0)
+#endif
+
     struct BufferCollection;
     using Editor::CharOffset;
     using Editor::Length;
@@ -81,6 +105,7 @@ namespace RatchetPieceTree
                     lineFeeds(lineFeeds),
                     childCount(childCount)
             {
+                NEW_NODE_ALLOC();
                 if(childCount < MaxChildren)
                 {
                     this->offsets.back() = offsets[childCount-1];
@@ -96,6 +121,7 @@ namespace RatchetPieceTree
                     lineFeeds(lineFeeds),
                     childCount(childCount)
             {
+                NEW_NODE_ALLOC();
                 if(childCount < MaxChildren)
                 {
                     this->offsets.back() = offsets[childCount-1];
@@ -106,6 +132,13 @@ namespace RatchetPieceTree
             std::array<Length, MaxChildren> offsets;
             std::array<LFCount, MaxChildren> lineFeeds;
             size_t childCount;
+
+#ifdef COUNT_ALLOC
+            ~Node()
+            {
+                NEW_NODE_DEALLOC();
+            }
+#endif
 
             bool isLeaf ()const{
                 return children.index() != 0;
@@ -199,18 +232,5 @@ namespace RatchetPieceTree
         std::vector<StackEntry> stack;
     };
 
-    #if 1
-    enum class MarkReason : size_t { None, Traverse, Collect, Made, Skip };
-    struct algo_marker
-    {
-        B_Tree<10>::NodePtr node;
-        MarkReason reason;
-    };
-    extern std::vector<algo_marker> algorithm;
-    
-    #define algo_mark(node, reason) algorithm.push_back({node, MarkReason::reason})
-    #else
-    #define algo_mark(node, reason) do{}while(0)
-    #endif
     
 };
