@@ -11,6 +11,10 @@
 
 namespace PieceTree
 {
+#ifdef COUNT_ALLOC
+     size_t alloc_count;
+     size_t dealloc_count;
+#endif
     constexpr LFCount operator+(LFCount lhs, LFCount rhs)
     {
         return LFCount{ rep(lhs) + rep(rhs) };
@@ -53,7 +57,7 @@ namespace PieceTree
             } while (not os_atomic_u128_eval_cond_assign(&node->blk->base_blk->free_list, next_head, &old_head));
         }
     }
-
+    
     const RBNodeCounted* take_node_ref(const RBNodeCounted* node)
     {
         if (not nil_node(node))

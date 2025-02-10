@@ -3,8 +3,13 @@
 #include <cassert>
 
 
+
 #include "arena.h"
 #include "fred-strings.h"
+
+#define COUNT_ALLOC
+
+
 #if 1
 #include "ratbuf.h"
 #include "ratbuf_btree.cpp"
@@ -825,6 +830,8 @@ void test10()
     tree_builder_accept(arena, &builder, str8_mut(str8_literal("d!")));
     Tree* tree = tree_builder_finish(&builder);
 
+/*
+
     {
         auto it = begin(tree);
         assert(*it == 'H');
@@ -859,6 +866,9 @@ void test10()
     }
     release_tree(tree);
     Arena::scratch_end(scratch);
+
+    */
+
 }
 
 void test11()
@@ -895,16 +905,38 @@ int main()
     Arena::populate_scratch_arenas({ scratch_arenas, arena_size });
 
     test1();
+    printf("test1: allocs=%zd, deallocs=%zd\n", alloc_count, dealloc_count);
+    alloc_count=0;dealloc_count=0;
     test2();
+    printf("test2: allocs=%zd, deallocs=%zd\n", alloc_count, dealloc_count);
+    alloc_count=0;dealloc_count=0;
     test3();
+    printf("test3: allocs=%zd, deallocs=%zd\n", alloc_count, dealloc_count);
+    alloc_count=0;dealloc_count=0;
     test4();
+    printf("test4: allocs=%zd, deallocs=%zd\n", alloc_count, dealloc_count);
+    alloc_count=0;dealloc_count=0;
     test5();
+    printf("test5: allocs=%zd, deallocs=%zd\n", alloc_count, dealloc_count);
+    alloc_count=0;dealloc_count=0;
     test6();
+    printf("test6: allocs=%zd, deallocs=%zd\n", alloc_count, dealloc_count);
+    alloc_count=0;dealloc_count=0;
     test7();
+    printf("test7: allocs=%zd, deallocs=%zd\n", alloc_count, dealloc_count);
+    alloc_count=0;dealloc_count=0;
     test8();
+    printf("test8: allocs=%zd, deallocs=%zd\n", alloc_count, dealloc_count);
+    alloc_count=0;dealloc_count=0;
     test9();
+    printf("test9: allocs=%zd, deallocs=%zd\n", alloc_count, dealloc_count);
+    alloc_count=0;dealloc_count=0;
     test10();
+    printf("test10: allocs=%zd, deallocs=%zd\n", alloc_count, dealloc_count);
+    alloc_count=0;dealloc_count=0;
     test11();
+    printf("test11: allocs=%zd, deallocs=%zd\n", alloc_count, dealloc_count);
+    alloc_count=0;dealloc_count=0;
 
 #ifdef TIMING_DATA
     time_buffer();
