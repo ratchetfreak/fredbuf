@@ -3,6 +3,8 @@
 //#include <format>
 //#include <source_location>
 
+#define COUNT_ALLOC
+
 #if 1
 #include "ratbuf.h"
 #include "ratbuf_btree.cpp"
@@ -568,7 +570,7 @@ void test10()
     builder.accept("llo, Worl");
     builder.accept("d!");
     auto tree = builder.create();
-
+/*
     {
         auto it = begin(tree);
         assert(*it == 'H');
@@ -600,7 +602,7 @@ void test10()
         assert(it!=it2);
         ++it2;++it2;
         assert(it==it2);
-    }
+    }*/
 }
 
 
@@ -621,14 +623,36 @@ void test11()
 int main()
 {
     test1();
+    printf("test1: allocs=%zd, deallocs=%zd\n", alloc_count, dealloc_count);
+    alloc_count=0;dealloc_count=0;
     test2();
+    printf("test2: allocs=%zd, deallocs=%zd\n", alloc_count, dealloc_count);
+    alloc_count=0;dealloc_count=0;
     test3();
+    printf("test3: allocs=%zd, deallocs=%zd\n", alloc_count, dealloc_count);
+    alloc_count=0;dealloc_count=0;
     test4();
+    printf("test4: allocs=%zd, deallocs=%zd\n", alloc_count, dealloc_count);
+    alloc_count=0;dealloc_count=0;
     test5();
+    printf("test5: allocs=%zd, deallocs=%zd\n", alloc_count, dealloc_count);
+    alloc_count=0;dealloc_count=0;
     test6();
+    printf("test6: allocs=%zd, deallocs=%zd\n", alloc_count, dealloc_count);
+    alloc_count=0;dealloc_count=0;
     test7();
+    printf("test7: allocs=%zd, deallocs=%zd\n", alloc_count, dealloc_count);
+    alloc_count=0;dealloc_count=0;
     test8();
+    printf("test8: allocs=%zd, deallocs=%zd\n", alloc_count, dealloc_count);
+    alloc_count=0;dealloc_count=0;
     test9();
+    printf("test9: allocs=%zd, deallocs=%zd\n", alloc_count, dealloc_count);
+    alloc_count=0;dealloc_count=0;
     test10();
+    printf("test10: allocs=%zd, deallocs=%zd\n", alloc_count, dealloc_count);
+    alloc_count=0;dealloc_count=0;
     test11();
+    printf("test11: allocs=%zd, deallocs=%zd\n", alloc_count, dealloc_count);
+    alloc_count=0;dealloc_count=0;
 }

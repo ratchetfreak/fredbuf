@@ -16,6 +16,18 @@
 
 namespace PieceTree
 {
+    
+    
+#ifdef COUNT_ALLOC
+    extern size_t alloc_count;
+    extern size_t dealloc_count;
+#define NEW_NODE_ALLOC() alloc_count++
+#define NEW_NODE_DEALLOC() dealloc_count++
+#else
+#define NEW_NODE_ALLOC() do{}while(0)
+#define NEW_NODE_DEALLOC() do{}while(0)
+#endif
+    
     enum class BufferIndex : size_t
     {
         ModBuf = sentinel_for<BufferIndex>
@@ -92,7 +104,9 @@ namespace PieceTree
         struct Node
         {
             Node(Color c, const NodePtr& lft, const NodeData& data, const NodePtr& rgt);
-
+#ifdef COUNT_ALLOC
+            ~Node();
+#endif
             Color color;
             NodePtr left;
             NodeData data;

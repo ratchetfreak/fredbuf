@@ -12,6 +12,10 @@
 
 namespace PieceTree
 {
+#ifdef COUNT_ALLOC
+     size_t alloc_count;
+     size_t dealloc_count;
+#endif
     constexpr LFCount operator+(LFCount lhs, LFCount rhs)
     {
         return LFCount{ rep(lhs) + rep(rhs) };
@@ -20,7 +24,15 @@ namespace PieceTree
     RedBlackTree::Node::Node(Color c, const NodePtr& lft, const NodeData& data, const NodePtr& rgt)
         : color(c), left(lft), data(data), right(rgt)
     {
+        NEW_NODE_ALLOC();
     }
+    
+#ifdef COUNT_ALLOC
+    RedBlackTree::Node::~Node()
+    {
+        NEW_NODE_DEALLOC();
+    }
+#endif
 
     const RedBlackTree::Node* RedBlackTree::root_ptr() const
     {
