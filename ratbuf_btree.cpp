@@ -8,6 +8,7 @@
 #include <string>
 #include <vector>
 #include <array>
+#include <sstream>
 
 #include "types.h"
 #include "enum-utils.h"
@@ -1055,13 +1056,26 @@ namespace RatchetPieceTree
         return LFCount{ rep(retract(end.line, rep(start.line))) };
     }
 
-    void Tree::get_line_content(std::string* buf, Line line) const
+    void Tree::get_line_content(std::string* res, Line line) const
+    {
+        // Reset the buffer.
+        res->clear();
+        if (line == Line::IndexBeginning)
+            return;
+        std::stringstream buf;
+        assemble_line(&buf, root, line);
+        *res = buf.str();
+    }
+    
+    void Tree::get_line_content(std::stringstream* buf, Line line) const
     {
         // Reset the buffer.
         buf->clear();
         if (line == Line::IndexBeginning)
             return;
+        
         assemble_line(buf, root, line);
+        
     }
 
     // Direct history manipulation.
@@ -1080,7 +1094,7 @@ namespace RatchetPieceTree
         compute_buffer_meta();
     }
 
-    void Tree::assemble_line(std::string* buf, const StorageTree& node, Line line) const
+    void Tree::assemble_line(std::stringstream* buf, const StorageTree& node, Line line) const
     {
         if(node.is_empty())
             return;
@@ -1092,7 +1106,7 @@ namespace RatchetPieceTree
             char c = walker.next();
             if (c == '\n')
                 break;
-            buf->push_back(c);
+            buf->put(c);
         }
     }
 

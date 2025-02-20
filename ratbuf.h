@@ -125,6 +125,7 @@ namespace RatchetPieceTree
 
         // Queries.
         void get_line_content(std::string* buf, Line line) const;
+        void get_line_content(std::stringstream* buf, Line line) const;
         [[nodiscard]] IncompleteCRLF get_line_content_crlf(std::string* buf, Line line) const;
         char at(CharOffset offset) const;
         Line line_at(CharOffset offset) const;
@@ -181,7 +182,7 @@ namespace RatchetPieceTree
         static Piece trim_piece_left(const BufferCollection* buffers, const Piece& piece, const BufferCursor& pos);
 
         // Direct mutations.
-        void assemble_line(std::string* buf, const StorageTree& node, Line line) const;
+        void assemble_line(std::stringstream* buf, const StorageTree& node, Line line) const;
         Piece build_piece(std::string_view txt);
         void combine_pieces(NodePosition existing_piece, Piece new_piece);
         void remove_node_range(NodePosition first, Length length);
@@ -209,6 +210,7 @@ namespace RatchetPieceTree
 
         // Queries.
         void get_line_content(std::string* buf, Line line) const;
+        void get_line_content(std::stringstream* buf, Line line) const;
         [[nodiscard]] IncompleteCRLF get_line_content_crlf(std::string* buf, Line line) const;
         Line line_at(CharOffset offset) const;
         LineRange get_line_range(Line line) const;
@@ -242,6 +244,7 @@ namespace RatchetPieceTree
 
         // Queries.
         void get_line_content(std::string* buf, Line line) const;
+        void get_line_content(std::stringstream* buf, Line line) const;
         [[nodiscard]] IncompleteCRLF get_line_content_crlf(std::string* buf, Line line) const;
         Line line_at(CharOffset offset) const;
         LineRange get_line_range(Line line) const;

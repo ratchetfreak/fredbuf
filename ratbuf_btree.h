@@ -11,22 +11,13 @@
 #include "types.h"
 
 
+#ifndef NDEBUG
+#define LOG_ALGORITHM
+#endif // NDEBUG
 namespace RatchetPieceTree
 {
 
-#ifdef LOG_ALGORITHM
-    enum class MarkReason : size_t { None, Traverse, Collect, Made, Skip };
-    struct algo_marker
-    {
-        B_Tree<10>::NodePtr node;
-        MarkReason reason;
-    };
-    extern std::vector<algo_marker> algorithm;
 
-#define algo_mark(node, reason) algorithm.push_back({node, MarkReason::reason})
-#else
-#define algo_mark(node, reason) do{}while(0)
-#endif
 
 #ifdef COUNT_ALLOC
     extern size_t alloc_count;
@@ -231,6 +222,18 @@ namespace RatchetPieceTree
         };
         std::vector<StackEntry> stack;
     };
+#ifdef LOG_ALGORITHM
+    enum class MarkReason : size_t { None, Traverse, Collect, Made, Skip };
+    struct algo_marker
+    {
+        B_Tree<10>::NodePtr node;
+        MarkReason reason;
+    };
+    extern std::vector<algo_marker> algorithm;
 
+#define algo_mark(node, reason) algorithm.push_back({node, MarkReason::reason})
+#else
+#define algo_mark(node, reason) do{}while(0)
+#endif
     
 };

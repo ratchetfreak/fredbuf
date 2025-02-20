@@ -5,6 +5,6 @@ for %%a in (%*) do set "%%a=1"
 set timing_flag=
 if "%timing%"=="1" set timing_flag=/DTIMING_DATA
 
-cl /nologo /std:c++latest /EHsc /W4 /WX /diagnostics:caret /diagnostics:color /Z7 %timing_flag% fredbuf-test.cpp /Fefredbuf-test.exe
+cl /nologo /std:c++latest /D_CONTAINER_DEBUG_LEVEL=1 /EHsc /W4 /WX /diagnostics:caret /diagnostics:color /Z7 %timing_flag% fredbuf-test.cpp /Fefredbuf-test.exe
 
-cl /nologo /std:c++latest /EHsc /W4 /WX /diagnostics:caret /diagnostics:color /Zi ratbuf_btree.cpp /c
+cl /nologo /std:c++latest /D_CONTAINER_DEBUG_LEVEL=1 /EHsc /W4 /WX /diagnostics:caret /diagnostics:color /Zi ratbuf_btree.cpp /c
