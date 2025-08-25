@@ -171,7 +171,7 @@ namespace RatchetPieceTree
 
         template <Accumulator accumulate>
         static void line_start(CharOffset* offset, const BufferCollection* buffers, const StorageTree& node, Line line);
-        static void line_end_crlf(CharOffset* offset, const BufferCollection* buffers, const StorageTree& root, const StorageTree& node, Line line);
+        static void line_end_crlf(CharOffset* offset, const BufferCollection* buffers, const StorageTree::Node& root, const StorageTree::Node& node, Line line);
         static Length accumulate_value(const BufferCollection* buffers, const Piece& piece, Line index);
         static Length accumulate_value_no_lf(const BufferCollection* buffers, const Piece& piece, Line index);
         static LFCount line_feed_count(const BufferCollection* buffers, BufferIndex index, const BufferCursor& start, const BufferCursor& end);
