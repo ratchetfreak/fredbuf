@@ -114,6 +114,21 @@ void assume_buffer(const PieceTree::Tree* tree, std::string_view expected)
     assume_reverse_buffer(tree, buf, start + retract(tree->length()));
 }
 
+void assume_lineRange(PieceTree::LineRange actual, PieceTree::LineRange expected)
+{
+    if(expected.first != actual.first || expected.last != actual.last)
+    {
+        
+        size_t slen = snprintf(NULL, 0,"Range {%lld,%lld} does not match epected result {%lld,%lld} ", actual.first, actual.last, expected.first, expected.last);
+
+         std::string s ;
+        s.resize(slen);
+         slen = snprintf(s.data(), s.size(),"Range {%lld,%lld} does not match epected result {%lld,%lld} ", actual.first, actual.last, expected.first, expected.last);
+        fprintf(stderr, "%s\n", s.c_str());
+        assert(false);
+    }
+}
+
 using namespace PieceTree;
 void test1()
 {
@@ -619,6 +634,43 @@ void test11()
     assume_buffer(&tree, "Hello, World!H!Hello, World!");
 
 }
+void test12()
+{
+    
+    TreeBuilder builder;
+    std::string buf;
+    for(int i = 0; i< 10; i++)
+        builder.accept("Hello, World!\n");
+    auto tree = builder.create();
+    
+    LineRange range = tree.get_line_range(Line(2));
+    LineRange range_crlf = tree.get_line_range_crlf(Line(2));
+    LineRange range_with_newline = tree.get_line_range_with_newline(Line(2));
+    printf("range first=%zd, last=%zd\n", range.first, range.last);
+    printf("range_crlf first=%zd, last=%zd\n", range_crlf.first, range_crlf.last);
+    printf("range_with_newline first=%zd, last=%zd\n", range_with_newline.first, range_with_newline.last);
+    
+        
+    LineRange expected_range; 
+    expected_range.first=Offset(14); 
+    expected_range.last=Offset(27);
+    LineRange expected_range_crlf; 
+    expected_range_crlf.first=Offset(14); 
+    expected_range_crlf.last=Offset(27);
+    LineRange expected_range_with_newline; 
+    expected_range_with_newline.first=Offset(14); 
+    expected_range_with_newline.last=Offset(28);
+    
+    assume_lineRange(range, expected_range);
+    assume_lineRange(range_crlf, expected_range_crlf);
+    assume_lineRange(range_with_newline, expected_range_with_newline);
+    
+    //if (expected != buf)
+    
+    //printf("first=%zd, last=%zd\n", res.first, res.last);
+    //assume_buffer(&tree, "Hello, World!H!Hello, World!");
+
+}
 
 int main()
 {
@@ -654,5 +706,8 @@ int main()
     alloc_count=0;dealloc_count=0;
     test11();
     printf("test11: allocs=%zd, deallocs=%zd\n", alloc_count, dealloc_count);
+    alloc_count=0;dealloc_count=0;
+    test12();
+    printf("test12: allocs=%zd, deallocs=%zd\n", alloc_count, dealloc_count);
     alloc_count=0;dealloc_count=0;
 }
