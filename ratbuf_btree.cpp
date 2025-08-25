@@ -1011,12 +1011,46 @@ namespace RatchetPieceTree
         }
         internal_remove(offset, count);
     }
+    /*
+    void Tree::line_end_crlf(CharOffset* offset, const BufferCollection* buffers, const StorageTree::Node& root, const StorageTree::Node& node, Line line)
+    {
+        if(node.isLeaf())
+        {
+            for(size_t i = 0; i < node.childCount; i++)
+            {
+                //lineFeeds[i].
+            }
+        }
+        else
+        {
+            for(size_t i = 0; i < node.childCount; i++)
+            {
+                //lineFeeds[i].
+            }
+        }
+    }*/
 
     LineRange Tree::get_line_range(Line line) const
     {
         LineRange range{ };
         line_start<&Tree::accumulate_value>(&range.first, &buffers, root, line);
         line_start<&Tree::accumulate_value_no_lf>(&range.last, &buffers, root, extend(line));
+        return range;
+    }
+    LineRange Tree::get_line_range_crlf(Line line) const
+    {
+        LineRange range{ };
+        line_start<&Tree::accumulate_value>(&range.first, &buffers, root, line);
+        line_end_crlf(&range.last, &buffers, *(root.root_ptr())
+        , *(root.root_ptr()), extend(line));
+        return range;
+    }
+
+    LineRange Tree::get_line_range_with_newline(Line line) const
+    {
+        LineRange range{ };
+        line_start<&Tree::accumulate_value>(&range.first, &buffers, root, line);
+        line_start<&Tree::accumulate_value>(&range.last, &buffers, root, extend(line));
         return range;
     }
     OwningSnapshot Tree::owning_snap() const
@@ -1066,7 +1100,7 @@ namespace RatchetPieceTree
         assemble_line(&buf, root, line);
         *res = buf.str();
     }
-    
+
     void Tree::get_line_content(std::stringstream* buf, Line line) const
     {
         // Reset the buffer.
@@ -1098,7 +1132,7 @@ namespace RatchetPieceTree
     {
         if(node.is_empty())
             return;
-                CharOffset line_offset{ };
+        CharOffset line_offset{ };
         line_start<&Tree::accumulate_value>(&line_offset, &buffers, node, line);
         TreeWalker walker{ this, line_offset };
         while (not walker.exhausted())
@@ -1448,6 +1482,59 @@ namespace RatchetPieceTree
     {
         // Compute the buffer meta for 'dt'.
         compute_buffer_meta(&meta, dt);
+    }
+
+    void ReferenceSnapshot::get_line_content(std::string* buf, Line line) const
+    {
+        // Reset the buffer.
+        buf->clear();
+        if (line == Line::IndexBeginning)
+            return;
+        if (root.is_empty())
+            return;
+        CharOffset line_offset{ };
+        Tree::line_start<&Tree::accumulate_value>(&line_offset, buffers, root, line);
+        TreeWalker walker{ this, line_offset };
+        while (not walker.exhausted())
+        {
+            char c = walker.next();
+            if (c == '\n')
+                break;
+            buf->push_back(c);
+        }
+    }
+    
+    Line ReferenceSnapshot::line_at(CharOffset offset) const
+    {
+        if (is_empty())
+            return Line::Beginning;
+        auto result = Tree::node_at(buffers, root, offset);
+        return result.line;
+    }
+
+
+    LineRange ReferenceSnapshot::get_line_range(Line line) const
+    {
+        LineRange range{ };
+        Tree::line_start<&Tree::accumulate_value>(&range.first, buffers, root, line);
+        Tree::line_start<&Tree::accumulate_value_no_lf>(&range.last, buffers, root, extend(line));
+        return range;
+    }
+    LineRange ReferenceSnapshot::get_line_range_crlf(Line line) const
+    {
+        LineRange range{ };
+        Tree::line_start<&Tree::accumulate_value>(&range.first, buffers, root, line);
+        Tree::line_end_crlf(&range.last, buffers, *root.root_ptr()
+        , *root.root_ptr(), extend(line));
+        return range;
+    }
+
+    LineRange ReferenceSnapshot::get_line_range_with_newline(Line line) const
+    {
+        LineRange range{ };
+        Tree::line_start<&Tree::accumulate_value>(&range.first, buffers, root, line);
+        Tree::line_start<&Tree::accumulate_value>(&range.last, buffers, root, extend(line));
+        return range;
     }
 
     void TreeBuilder::accept(std::string_view txt)
