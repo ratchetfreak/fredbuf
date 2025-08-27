@@ -1011,24 +1011,111 @@ namespace RatchetPieceTree
         }
         internal_remove(offset, count);
     }
-    /*
-    void Tree::line_end_crlf(CharOffset* offset, const BufferCollection* buffers, const StorageTree::Node& root, const StorageTree::Node& node, Line line)
+
+    void Tree::line_end_crlf(CharOffset* offset, const BufferCollection* buffers, const StorageTree::Node& node, Line line)
     {
-        if(node.isLeaf())
+        
+        assert(line != Line::IndexBeginning);
+        auto line_index = rep(retract(line));
+
+        const StorageTree::Node* n = &node;
+        const StorageTree::Node* prevNode = nullptr;
+        
+        while(!n->isLeaf())
         {
-            for(size_t i = 0; i < node.childCount; i++)
+            const StorageTree::ChildArray& children = std::get<StorageTree::ChildArray>(n->children);
+            int i;
+            for(i = 0; i < n->childCount;i++)
             {
-                //lineFeeds[i].
+                if(line_index <= rep(n->lineFeeds[i]))
+                {
+                    if(i>0)
+                    {
+                        line_index -= rep(n->lineFeeds[i-1]);
+                        *offset = *offset + (n->offsets[i-1]);
+                    }
+                    n = children[i].get();
+                    if(i>0)
+                    {
+                        prevNode = children[i].get();
+                    }
+                    else
+                    {
+                        if(prevNode!=nullptr)
+                        {
+                            const StorageTree::ChildArray& prevChildren = std::get<StorageTree::ChildArray>(n->children);
+                            prevNode = prevChildren[prevNode->childCount-1].get();
+                        }
+                    }
+                    i=0;
+                    break;
+                }
+                //line_index -= rep(n->lineFeeds[i]);
+                //*offset = *offset + (n->offsets[i]);
+                
             }
+            if(i==n->childCount){
+                i--;
+                line_index -= rep(n->lineFeeds[i-1]);
+                *offset = *offset + (n->offsets[i-1]);
+
+                n = children[i].get();
+            }
+        }
+        const StorageTree::LeafArray& children = std::get<StorageTree::LeafArray>(n->children);
+        int i;
+        for(i = 0; i < n->childCount;i++)
+        {
+            if(line_index <= rep(children[i].piece.newline_count))
+            {
+                break;
+            }
+            line_index -= rep(children[i].piece.newline_count);
+            *offset = *offset + children[i].piece.length;
+        }
+        if(i==n->childCount){
+            return;
+        }
+
+        Piece piece = children[i].piece;
+        Piece prevPiece;
+        if(i>0)
+        {
+            prevPiece = children[i-1].piece;
         }
         else
         {
-            for(size_t i = 0; i < node.childCount; i++)
+            const StorageTree::LeafArray& prevChildren = std::get<StorageTree::LeafArray>(prevNode->children);
+            prevPiece = prevChildren[prevNode->childCount-1].piece;
+        }
+        Length len  {0};
+        if (line_index != 0)
+        {
+            len = len + accumulate_value_no_lf(buffers, piece, Line{ line_index - 1 });
+            if(len == Length{})
             {
-                //lineFeeds[i].
+                if(prevPiece.length != Length{})
+                    assert(false);
+            }
+            else
+            {
+                auto* charbuffer = buffers->buffer_at(piece.index);
+                auto buf_offset = buffers->buffer_offset(piece.index, piece.first)+len;
+                const char* p = charbuffer->buffer.data() + rep(buf_offset);
+                if(*p == '\n')
+                {
+                    p--;
+                    
+                    if(*p == '\r')
+                    {
+                        p--;
+                        len = retract(len);
+                    }
+                }
             }
         }
-    }*/
+        *offset = *offset + len;
+    }
 
     LineRange Tree::get_line_range(Line line) const
     {
@@ -1041,8 +1128,7 @@ namespace RatchetPieceTree
     {
         LineRange range{ };
         line_start<&Tree::accumulate_value>(&range.first, &buffers, root, line);
-        line_end_crlf(&range.last, &buffers, *(root.root_ptr())
-        , *(root.root_ptr()), extend(line));
+        line_end_crlf(&range.last, &buffers, *(root.root_ptr()), extend(line));
         return range;
     }
 
@@ -1470,6 +1556,59 @@ namespace RatchetPieceTree
         compute_buffer_meta(&meta, dt);
     }
 
+
+    void OwningSnapshot::get_line_content(std::string* buf, Line line) const
+    {
+        // Reset the buffer.
+        buf->clear();
+        if (line == Line::IndexBeginning)
+            return;
+        if (root.is_empty())
+            return;
+        CharOffset line_offset{ };
+        Tree::line_start<&Tree::accumulate_value>(&line_offset, &buffers, root, line);
+        TreeWalker walker{ this, line_offset };
+        while (not walker.exhausted())
+        {
+            char c = walker.next();
+            if (c == '\n')
+                break;
+            buf->push_back(c);
+        }
+    }
+    
+    Line OwningSnapshot::line_at(CharOffset offset) const
+    {
+        if (is_empty())
+            return Line::Beginning;
+        auto result = Tree::node_at(&buffers, root, offset);
+        return result.line;
+    }
+
+    LineRange OwningSnapshot::get_line_range(Line line) const
+    {
+        LineRange range{ };
+        Tree::line_start<&Tree::accumulate_value>(&range.first, &buffers, root, line);
+        Tree::line_start<&Tree::accumulate_value_no_lf>(&range.last, &buffers, root, extend(line));
+        return range;
+    }
+    LineRange OwningSnapshot::get_line_range_crlf(Line line) const
+    {
+        LineRange range{ };
+        Tree::line_start<&Tree::accumulate_value>(&range.first, &buffers, root, line);
+        Tree::line_end_crlf(&range.last, &buffers, *root.root_ptr(), extend(line));
+        return range;
+    }
+
+    LineRange OwningSnapshot::get_line_range_with_newline(Line line) const
+    {
+        LineRange range{ };
+        Tree::line_start<&Tree::accumulate_value>(&range.first, &buffers, root, line);
+        Tree::line_start<&Tree::accumulate_value>(&range.last, &buffers, root, extend(line));
+        return range;
+    }
+
+
     ReferenceSnapshot::ReferenceSnapshot(const Tree* tree):
         root{ tree->root },
         meta{ tree->meta },
@@ -1512,7 +1651,6 @@ namespace RatchetPieceTree
         return result.line;
     }
 
-
     LineRange ReferenceSnapshot::get_line_range(Line line) const
     {
         LineRange range{ };
@@ -1524,8 +1662,7 @@ namespace RatchetPieceTree
     {
         LineRange range{ };
         Tree::line_start<&Tree::accumulate_value>(&range.first, buffers, root, line);
-        Tree::line_end_crlf(&range.last, buffers, *root.root_ptr()
-        , *root.root_ptr(), extend(line));
+        Tree::line_end_crlf(&range.last, buffers, *root.root_ptr(), extend(line));
         return range;
     }
 

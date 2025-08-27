@@ -640,7 +640,7 @@ void test12()
     TreeBuilder builder;
     std::string buf;
     for(int i = 0; i< 10; i++)
-        builder.accept("Hello, World!\n");
+        builder.accept("Hello, \rWorld!\r\n");
     auto tree = builder.create();
     
     LineRange range = tree.get_line_range(Line(2));
@@ -652,14 +652,14 @@ void test12()
     
         
     LineRange expected_range; 
-    expected_range.first=Offset(14); 
-    expected_range.last=Offset(27);
+    expected_range.first=Offset(16); 
+    expected_range.last=Offset(31);
     LineRange expected_range_crlf; 
-    expected_range_crlf.first=Offset(14); 
-    expected_range_crlf.last=Offset(27);
+    expected_range_crlf.first=Offset(16);
+    expected_range_crlf.last=Offset(30);
     LineRange expected_range_with_newline; 
-    expected_range_with_newline.first=Offset(14); 
-    expected_range_with_newline.last=Offset(28);
+    expected_range_with_newline.first=Offset(16); 
+    expected_range_with_newline.last=Offset(32);
     
     assume_lineRange(range, expected_range);
     assume_lineRange(range_crlf, expected_range_crlf);
