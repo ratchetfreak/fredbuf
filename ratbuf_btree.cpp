@@ -1307,6 +1307,11 @@ namespace RatchetPieceTree
         size_t node_start_offset = 0;
         size_t newline_count = 0;
         const StorageTree::Node* node = tree.root_ptr();
+        if(!node)
+        {
+            NodePosition result { };
+            return result;
+        }
         
         
         while(!node->isLeaf())
