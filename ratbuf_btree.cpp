@@ -1085,8 +1085,11 @@ namespace RatchetPieceTree
         }
         else
         {
-            const StorageTree::LeafArray& prevChildren = std::get<StorageTree::LeafArray>(prevNode->children);
-            prevPiece = prevChildren[prevNode->childCount-1].piece;
+            if(prevNode != nullptr)
+            {
+                const StorageTree::LeafArray& prevChildren = std::get<StorageTree::LeafArray>(prevNode->children);
+                prevPiece = prevChildren[prevNode->childCount-1].piece;
+            }
         }
         Length len  {0};
         if (line_index != 0)
