@@ -1407,7 +1407,7 @@ namespace RatchetPieceTree
             if(i>0)
             {
                 node_start_offset += rep(node->offsets[i-1]);
-                newline_count += rep(node->offsets[i-1]);
+                newline_count += rep(node->lineFeeds[i-1]);
             }
         }
         Piece result_piece =  children[i].piece;
