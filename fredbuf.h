@@ -105,7 +105,11 @@ namespace PieceTree
     {
         CharOffset first;
         CharOffset last; // Does not include LF.
+<<<<<<< HEAD
 
+=======
+        
+>>>>>>> 7e9de5b (apply starfreaks patches)
         bool operator==(const LineRange&) const = default;
     };
 
@@ -448,6 +452,7 @@ namespace PieceTree
         const char* first_ptr = nullptr;
         const char* last_ptr = nullptr;
     };
+
 
     enum class EmptySelection : bool { No, Yes };
 

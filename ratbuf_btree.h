@@ -12,7 +12,7 @@
 
 
 #ifndef NDEBUG
-#define LOG_ALGORITHM
+//#define LOG_ALGORITHM
 #endif // NDEBUG
 namespace RatchetPieceTree
 {
