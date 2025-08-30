@@ -67,6 +67,8 @@ namespace PieceTree
     {
         CharOffset first;
         CharOffset last; // Does not include LF.
+        
+        bool operator==(const LineRange&) const = default;
     };
 
     struct UndoRedoResult
@@ -230,6 +232,11 @@ namespace PieceTree
         Length line_count() const
         {
             return Length{ rep(meta.lf_count) + 1 };
+        }
+        
+        Length length() const
+        {
+            return meta.total_content_length;
         }
     private:
         friend class TreeWalker;
@@ -403,7 +410,7 @@ namespace PieceTree
     {
         return walker.exhausted();
     }
-
+#if 0
     enum class EmptySelection : bool { No, Yes };
 
     struct SelectionMeta
@@ -413,4 +420,5 @@ namespace PieceTree
         Offset last;
         EmptySelection empty;
     };
+#endif
 } // namespace PieceTree

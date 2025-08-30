@@ -285,7 +285,7 @@ namespace RatchetPieceTree
         auto insertIndex = insertPoint - node->offsets.begin();
         std::vector<NodeData> resultch;
 
-        auto children = std::get<std::array<NodeData, MaxChildren>>(node->children);
+        auto& children = std::get<std::array<NodeData, MaxChildren>>(node->children);
 
         auto child_it = children.begin();
         auto child_insert = children.begin()+insertIndex;
@@ -923,13 +923,14 @@ namespace RatchetPieceTree
         
         typedef B_Tree<MaxChildren>::NodePtr NPtr;
         typedef B_Tree<MaxChildren>::ChildArray  ChArr;
+        typedef B_Tree<MaxChildren>::LeafArray  LeafArr;
         std::vector<NPtr> layer;
         std::vector<NPtr> next_layer;
         
         if(root.is_empty() || root.root_ptr()->isLeaf())
             return;
         
-        auto children = std::get<ChArr>(root.root_ptr()->children);
+        auto& children = std::get<ChArr>(root.root_ptr()->children);
         next_layer.assign(children.begin(), children.begin()+root.root_ptr()->childCount);
         while(!next_layer.front()->isLeaf())
         {
@@ -939,13 +940,45 @@ namespace RatchetPieceTree
             {
                 assert(!(*nodeIt)->isLeaf());
                 assert((*nodeIt)->childCount >= MaxChildren/2);
-                auto node_children = std::get<ChArr>((*nodeIt)->children);
+                auto& node_children = std::get<ChArr>((*nodeIt)->children);
+                assert((*nodeIt)->offsets.back() == (*nodeIt)->offsets[(*nodeIt)->childCount-1]);
+                assert((*nodeIt)->lineFeeds.back() == (*nodeIt)->lineFeeds[(*nodeIt)->childCount-1]);
+                
+                LFCount prevLineEnd{};
+                Length prevOffset{};
+                for(size_t childIndex = 0; childIndex < (*nodeIt)->childCount; childIndex++)
+                {
+                    auto& node = node_children[childIndex];
+                    auto offsetDifference = rep((*nodeIt)->offsets[childIndex]) - rep(prevOffset);
+                    assert(rep(node->offsets.back()) == offsetDifference);
+                    prevOffset = (*nodeIt)->offsets[childIndex];
+                    
+                    auto lineDifference = rep((*nodeIt)->lineFeeds[childIndex]) - rep(prevLineEnd);
+                    assert(rep(node->lineFeeds.back()) == lineDifference);
+                    prevLineEnd = (*nodeIt)->lineFeeds[childIndex];
+                }
                 next_layer.insert(next_layer.end(), node_children.begin(), node_children.begin()+(*nodeIt)->childCount);
             }
         }
         layer = std::move(next_layer);
         for(auto nodeIt = layer.begin(); nodeIt != layer.end();++nodeIt)
         {
+            auto& node_children = std::get<LeafArr>((*nodeIt)->children);
+            LFCount prevLineEnd{};
+            Length prevOffset{};
+            for(size_t childIndex = 0; childIndex < (*nodeIt)->childCount; childIndex++)
+                {
+                    auto& piece = node_children[childIndex].piece;
+                    auto offsetDifference = rep((*nodeIt)->offsets[childIndex]) - rep(prevOffset);
+                    assert(rep(piece.length) == offsetDifference);
+                    prevOffset = (*nodeIt)->offsets[childIndex];
+                    
+                    auto lineDifference = rep((*nodeIt)->lineFeeds[childIndex]) - rep(prevLineEnd);
+                    auto bufferline = rep(piece.last.line) - rep(piece.first.line);
+                    assert(rep(piece.newline_count) == lineDifference);
+                    assert(bufferline == lineDifference);
+                    prevLineEnd = (*nodeIt)->lineFeeds[childIndex];
+                }
             assert((*nodeIt)->isLeaf());
             assert((*nodeIt)->childCount >= MaxChildren/2);
         }
@@ -1043,7 +1076,7 @@ namespace RatchetPieceTree
                     {
                         if(prevNode!=nullptr)
                         {
-                            const StorageTree::ChildArray& prevChildren = std::get<StorageTree::ChildArray>(n->children);
+                            const StorageTree::ChildArray& prevChildren = std::get<StorageTree::ChildArray>(prevNode->children);
                             prevNode = prevChildren[prevNode->childCount-1].get();
                         }
                     }
@@ -1150,6 +1183,18 @@ namespace RatchetPieceTree
     {
         return ReferenceSnapshot{ this };
     }
+    
+    char Tree::at(CharOffset offset) const
+    {
+        auto result = node_at(&buffers, root, offset);
+        if (result.node == nullptr)
+            return '\0';
+        auto* buffer = buffers.buffer_at(result.node->piece.index);
+        auto buf_offset = buffers.buffer_offset(result.node->piece.index, result.node->piece.first);
+        const char* p = buffer->buffer.data() + rep(buf_offset) + rep(result.remainder);
+        return *p;
+    }
+    
     Line Tree::line_at(CharOffset offset) const
     {
         if (is_empty())
@@ -1304,6 +1349,8 @@ namespace RatchetPieceTree
 
     NodePosition Tree::node_at(const BufferCollection* buffers, StorageTree tree, CharOffset off)
     {
+        if (tree.is_empty())
+            return { };
         size_t node_start_offset = 0;
         size_t newline_count = 0;
         const StorageTree::Node* node = tree.root_ptr();
@@ -1313,10 +1360,9 @@ namespace RatchetPieceTree
             return result;
         }
         
-        
         while(!node->isLeaf())
         {
-            auto children = std::get<StorageTree::ChildArray>(node->children);
+            auto& children = std::get<StorageTree::ChildArray>(node->children);
             int i = 0;
             for(; i<node->childCount; i++)
             {
@@ -1330,29 +1376,39 @@ namespace RatchetPieceTree
                     node = children[i].get();
                     break;
                 }
-                node_start_offset += rep(node->offsets[i]);
-                newline_count += rep(node->lineFeeds[i]);
+                //node_start_offset += rep(node->offsets[i]);
+                //newline_count += rep(node->lineFeeds[i]);
             }
             if(i==node->childCount){
                 node = children[node->childCount-1].get();
+                
+                node_start_offset += rep(children[node->childCount-1]->offsets.back());
+                newline_count += rep(children[node->childCount-1]->lineFeeds.back());
             }
         }
-        auto children = std::get<StorageTree::LeafArray>(node->children);
+        auto& children = std::get<StorageTree::LeafArray>(node->children);
         int i = 0;
         for(; i<node->childCount; i++)
         {
-            if(distance(Offset{node_start_offset}, off) < children[i].piece.length)
+            if(rep(distance(Offset{node_start_offset}, off)) < rep(node->offsets[i]))
             {
+                if(i>0)
+                {
+                    node_start_offset += rep(node->offsets[i-1]);
+                    newline_count += rep(node->lineFeeds[i-1]);
+                }
                 break;
             }
-            node_start_offset += rep(children[i].piece.length);
-            newline_count += rep(children[i].piece.newline_count);
+            
         }
         if(i>=node->childCount)
         {
             i--;
-            node_start_offset -= rep(children[i].piece.length);
-            newline_count -= rep(children[i].piece.newline_count);
+            if(i>0)
+            {
+                node_start_offset += rep(node->offsets[i-1]);
+                newline_count += rep(node->offsets[i-1]);
+            }
         }
         Piece result_piece =  children[i].piece;
         //node = children[i].get();
@@ -1651,6 +1707,48 @@ namespace RatchetPieceTree
         }
     }
     
+    namespace
+    {
+        template <typename TreeT>
+        [[nodiscard]] IncompleteCRLF trim_crlf(std::string* buf, TreeT* tree, CharOffset line_offset)
+        {
+            TreeWalker walker{ tree, line_offset };
+            auto prev_char = '\0';
+            while (not walker.exhausted())
+            {
+                char c = walker.next();
+                if (c == '\n')
+                {
+                    if (prev_char == '\r')
+                    {
+                        buf->pop_back();
+                        return IncompleteCRLF::No;
+                    }
+                    return IncompleteCRLF::Yes;
+                }
+                buf->push_back(c);
+                prev_char = c;
+            }
+            // End of the buffer is not an incomplete CRLF.
+            return IncompleteCRLF::No;
+        }
+    } // namespace [anon]
+
+    IncompleteCRLF Tree::get_line_content_crlf(std::string* buf, Line line) const
+    {
+        // Reset the buffer.
+        buf->clear();
+        if (line == Line::IndexBeginning)
+            return IncompleteCRLF::No;
+        auto node = root;
+        if (node.is_empty())
+            return IncompleteCRLF::No;
+        // Trying this new logic for now.
+        CharOffset line_offset{ };
+        line_start<&Tree::accumulate_value>(&line_offset, &buffers, node, line);
+        return trim_crlf(buf, this, line_offset);
+    }
+    
     Line ReferenceSnapshot::line_at(CharOffset offset) const
     {
         if (is_empty())
@@ -1851,7 +1949,7 @@ namespace RatchetPieceTree
             stack.push_back({children[childIndex].get(), 0});
         }
         algo_mark(stack.back().node->shared_from_this(), Traverse);
-        const StorageTree::LeafArray leafs = std::get<StorageTree::LeafArray>(stack.back().node->children);
+        const StorageTree::LeafArray& leafs = std::get<StorageTree::LeafArray>(stack.back().node->children);
 
         auto& piece = leafs[stack.back().index++].piece;
         auto* buffer = buffers->buffer_at(piece.index);
@@ -1970,7 +2068,7 @@ namespace RatchetPieceTree
             stack.push_back({children[stack.back().node->childCount - stack.back().index].get(), 0});
         }
 
-        const StorageTree::LeafArray leafs = std::get<StorageTree::LeafArray>(stack.back().node->children);
+        const StorageTree::LeafArray& leafs = std::get<StorageTree::LeafArray>(stack.back().node->children);
 
         stack.back().index++;
         auto& piece = leafs[stack.back().node->childCount - stack.back().index].piece;
