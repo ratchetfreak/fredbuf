@@ -1380,10 +1380,10 @@ namespace RatchetPieceTree
                 //newline_count += rep(node->lineFeeds[i]);
             }
             if(i==node->childCount){
-                node = children[node->childCount-1].get();
                 
                 node_start_offset += rep(children[node->childCount-1]->offsets.back());
                 newline_count += rep(children[node->childCount-1]->lineFeeds.back());
+                node = children[node->childCount-1].get();
             }
         }
         auto& children = std::get<StorageTree::LeafArray>(node->children);
