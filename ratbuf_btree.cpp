@@ -1351,8 +1351,8 @@ namespace RatchetPieceTree
     {
         if (tree.is_empty())
             return { };
-        size_t node_start_offset = 0;
-        size_t newline_count = 0;
+        Offset node_start_offset {};
+        Line newline_count {};
         const StorageTree::Node* node = tree.root_ptr();
         if(!node)
         {
@@ -1370,8 +1370,8 @@ namespace RatchetPieceTree
                 {
                     if(i>0)
                     {
-                        node_start_offset += rep(node->offsets[i-1]);
-                        newline_count += rep(node->lineFeeds[i-1]);
+                        node_start_offset = node_start_offset + node->offsets[i-1];
+                        newline_count = extend(newline_count, rep(node->lineFeeds[i-1]));
                     }
                     node = children[i].get();
                     break;
@@ -1380,9 +1380,11 @@ namespace RatchetPieceTree
                 //newline_count += rep(node->lineFeeds[i]);
             }
             if(i==node->childCount){
-                
-                node_start_offset += rep(children[node->childCount-1]->offsets.back());
-                newline_count += rep(children[node->childCount-1]->lineFeeds.back());
+                if(node->childCount>1)
+                {
+                    node_start_offset = node_start_offset+ node->offsets[node->childCount-2];
+                    newline_count = extend(newline_count, rep(node->lineFeeds[node->childCount-2]));
+                }
                 node = children[node->childCount-1].get();
             }
         }
@@ -1394,8 +1396,8 @@ namespace RatchetPieceTree
             {
                 if(i>0)
                 {
-                    node_start_offset += rep(node->offsets[i-1]);
-                    newline_count += rep(node->lineFeeds[i-1]);
+                    node_start_offset = node_start_offset + node->offsets[i-1];
+                    newline_count = extend(newline_count, rep(node->lineFeeds[i-1]));
                 }
                 break;
             }
@@ -1406,8 +1408,8 @@ namespace RatchetPieceTree
             i--;
             if(i>0)
             {
-                node_start_offset += rep(node->offsets[i-1]);
-                newline_count += rep(node->lineFeeds[i-1]);
+                node_start_offset = node_start_offset + node->offsets[i-1];
+                newline_count = extend(newline_count, rep(node->lineFeeds[i-1]));
             }
         }
         Piece result_piece =  children[i].piece;
@@ -1418,12 +1420,12 @@ namespace RatchetPieceTree
         auto pos = buffer_position(buffers, result_piece, remainder);
         // Note: since buffer_position will return us a newline relative to the buffer itself, we need
         // to retract it by the starting line of the piece to get the real difference.
-        newline_count += rep(retract(pos.line, rep(result_piece.first.line)));
+        newline_count = extend(newline_count, rep(retract(pos.line, rep(result_piece.first.line))));
 
         NodePosition result { .node = &children[i],
                     .remainder = remainder,
                     .start_offset = CharOffset{ node_start_offset },
-                    .line = Line{ newline_count + 1 } };
+                    .line = Line{ extend(newline_count) } };
         return result;
     }
     void Tree::compute_buffer_meta()
