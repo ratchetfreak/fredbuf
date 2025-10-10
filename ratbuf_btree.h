@@ -162,29 +162,31 @@ namespace RatchetPieceTree
         bool operator==(const B_Tree&) const = default;
 
         // Mutators.
+        
         B_Tree insert(const NodeData& x, Offset at, BufferCollection* buffers) const;
         B_Tree construct_from(std::vector<NodeData> leafNodes) const;
         B_Tree remove(Offset at, Length len, BufferCollection* buffers) const;
 
     private:
-        B_Tree(NodePtr root);
+        B_Tree(NodePtr root, uint32_t depth);
 
         using ChildVector =std::vector<NodePtr>;
         using LeafVector  =std::vector<NodeData>;
         struct TreeManipResult{
             ChildVector nodes;
-            
+            uint32_t depth;
         };
         TreeManipResult insertInto(const Node* node, const NodeData& x, Length at, BufferCollection* buffers) const;
         TreeManipResult insertInto_leaf(const Node* node, const NodeData& x, Length at, BufferCollection* buffers) const;
         
-        ChildVector remove_from(const Node* a, const Node* b, const Node* c, Length at, Length len, BufferCollection* buffers) const;
-        ChildVector remove_from_leafs(const Node* a, const Node* b, const Node* c, Length at, Length len, BufferCollection* buffers) const;
+        TreeManipResult remove_from(const Node* a, const Node* b, const Node* c, Length at, Length len, BufferCollection* buffers) const;
+        TreeManipResult remove_from_leafs(const Node* a, const Node* b, const Node* c, Length at, Length len, BufferCollection* buffers) const;
         
         NodePtr construct_leaf(const LeafVector &data, size_t begin, size_t end) const ;
         NodePtr construct_internal(const ChildVector &data, size_t begin, size_t end) const ;
 
         NodePtr root_node;
+        uint32_t tree_depth=0;
 
 
     };

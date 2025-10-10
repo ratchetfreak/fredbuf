@@ -69,7 +69,7 @@ namespace RatchetPieceTree
     } // namespace [anon]
 
     template<size_t MaxChildren>
-    B_Tree<MaxChildren>::B_Tree(NodePtr root):root_node(root){
+    B_Tree<MaxChildren>::B_Tree(NodePtr root, uint32_t depth):root_node(root), tree_depth(depth){
 
     }
     template<size_t MaxChildren>
@@ -90,7 +90,7 @@ namespace RatchetPieceTree
             (remaining <= (MaxChildren*2) && remaining >= MaxChildren));
         if(nodes.empty() && remaining < MaxChildren)
         {
-            return B_Tree(construct_leaf(leafNodes, 0, remaining));
+            return B_Tree(construct_leaf(leafNodes, 0, remaining), 1);
         }
         else
         {
@@ -99,6 +99,7 @@ namespace RatchetPieceTree
             i+=remaining/2;
             nodes.push_back(construct_leaf(leafNodes, i, leafNodes.size()));
         }
+        uint32_t depth = 1;
         while(nodes.size() > MaxChildren)
         {
             std::vector<NodePtr> childNodes;
@@ -113,8 +114,9 @@ namespace RatchetPieceTree
             i+=remaining/2;
             childNodes.push_back(construct_internal(nodes, i, nodes.size()));
             nodes = std::move(childNodes);
+            depth++;
         }
-        return B_Tree(construct_internal(nodes, 0, nodes.size()));
+        return B_Tree(construct_internal(nodes, 0, nodes.size()), depth+1);
     }
 
     template<size_t MaxChildren>
@@ -132,7 +134,7 @@ namespace RatchetPieceTree
         if(newNumChildren > 1)
         {
             NodePtr new_root = construct_internal(result.nodes, 0, newNumChildren);
-            return B_Tree<MaxChildren>(new_root);
+            return B_Tree<MaxChildren>(new_root, result.depth+1);
         }
         else
         {
@@ -144,7 +146,7 @@ namespace RatchetPieceTree
             else
             {
 
-                return B_Tree<MaxChildren>(std::move(result.nodes.front()));
+                return B_Tree<MaxChildren>(std::move(result.nodes.front()), result.depth);
             }
         }
     }
@@ -152,21 +154,21 @@ namespace RatchetPieceTree
     template<size_t MaxChildren>
     B_Tree<MaxChildren> B_Tree<MaxChildren>::remove(Offset at, Length len, BufferCollection* buffers) const
     {
-        std::vector<NodePtr> result = remove_from(root_node.get(), nullptr, nullptr, distance(Offset{0},at), len, buffers);
+        TreeManipResult result = remove_from(root_node.get(), nullptr, nullptr, distance(Offset{0},at), len, buffers);
 
-        if(result.empty())
+        if(result.nodes.empty())
         {
             return B_Tree<MaxChildren>();
         }
-        else if(result.size()== 1)
+        else if(result.nodes.size()== 1)
         {
-            return B_Tree<MaxChildren>(std::move(result[0]));
+            return B_Tree<MaxChildren>(std::move(result.nodes[0]), result.depth);
         }
         else
         {
-            assert(result.size() < MaxChildren);
-            NodePtr new_root = construct_internal(result, 0, result.size());
-            return B_Tree<MaxChildren>(new_root);
+            assert(result.nodes.size() < MaxChildren);
+            NodePtr new_root = construct_internal(result.nodes, 0, result.nodes.size());
+            return B_Tree<MaxChildren>(new_root, result.depth);
         }
     }
 
@@ -386,7 +388,7 @@ namespace RatchetPieceTree
     }
 
     template<size_t MaxChildren>
-    B_Tree<MaxChildren>::ChildVector B_Tree<MaxChildren>::remove_from_leafs(const Node* a, const Node* b, const Node* c, Length at, Length len, BufferCollection* buffers) const
+    B_Tree<MaxChildren>::TreeManipResult B_Tree<MaxChildren>::remove_from_leafs(const Node* a, const Node* b, const Node* c, Length at, Length len, BufferCollection* buffers) const
     {
         // b or c might be nullptr
 
@@ -479,53 +481,54 @@ namespace RatchetPieceTree
         }
 
 
-        ChildVector result;
+        TreeManipResult result;
+        result.depth = 1;
         if(allChildren.size() > MaxChildren*3)
         {
             
             size_t from = 0;
             size_t perChild = allChildren.size()/4;
 
-            result.push_back(construct_leaf(allChildren, from, from+perChild));
+            result.nodes.push_back(construct_leaf(allChildren, from, from+perChild));
             from+=perChild;
             if(allChildren.size()%4 > 1)
             {
                 perChild+=1;
             }
-            result.push_back(construct_leaf(allChildren, from, from+perChild));
+            result.nodes.push_back(construct_leaf(allChildren, from, from+perChild));
             from+=perChild;
-            result.push_back(construct_leaf(allChildren, from, from+perChild));
+            result.nodes.push_back(construct_leaf(allChildren, from, from+perChild));
             from+=perChild;
-            result.push_back(construct_leaf(allChildren, from, allChildren.size()));
+            result.nodes.push_back(construct_leaf(allChildren, from, allChildren.size()));
         }
         else if(allChildren.size() > MaxChildren*2)
         {
             size_t from = 0;
             size_t perChild = allChildren.size()/3;
 
-            result.push_back(construct_leaf(allChildren, from, from+perChild));
+            result.nodes.push_back(construct_leaf(allChildren, from, from+perChild));
             from+=perChild;
             if(allChildren.size()%3 > 1)
             {
                 perChild+=1;
             }
-            result.push_back(construct_leaf(allChildren, from, from+perChild));
+            result.nodes.push_back(construct_leaf(allChildren, from, from+perChild));
             from+=perChild;
-            result.push_back(construct_leaf(allChildren, from, allChildren.size()));
+            result.nodes.push_back(construct_leaf(allChildren, from, allChildren.size()));
         }
         else if(allChildren.size() > MaxChildren)
         {
             size_t from = 0;
             size_t mid = allChildren.size()/2;
-            result.push_back(construct_leaf(allChildren, from, from+mid));
+            result.nodes.push_back(construct_leaf(allChildren, from, from+mid));
 
-            result.push_back(construct_leaf(allChildren, mid, allChildren.size()));
+            result.nodes.push_back(construct_leaf(allChildren, mid, allChildren.size()));
 
         }
         else if(allChildren.size() > 0)
         {
             //assert(allChildren.size() >= MaxChildren/2);
-            result.push_back(construct_leaf(allChildren, 0, allChildren.size()));
+            result.nodes.push_back(construct_leaf(allChildren, 0, allChildren.size()));
         }
 
         return result;
@@ -621,7 +624,7 @@ namespace RatchetPieceTree
     }
 
     template<size_t MaxChildren>
-    B_Tree<MaxChildren>::ChildVector B_Tree<MaxChildren>::remove_from(const Node* a, const Node* b, const Node* c, Length at, Length len, BufferCollection* buffers) const
+    B_Tree<MaxChildren>::TreeManipResult B_Tree<MaxChildren>::remove_from(const Node* a, const Node* b, const Node* c, Length at, Length len, BufferCollection* buffers) const
     {
         // at least one of a and c should not participate in the remove
         // that way the result is always big enough to make at least 1 node
@@ -696,7 +699,7 @@ namespace RatchetPieceTree
                         recC->subTreeLength();
             Length to_remove_from_first_found = aplusbplusc - offset;
             i++;
-            ChildVector res;
+            TreeManipResult res;
             
             algo_mark(recC, Traverse);
 
@@ -796,7 +799,7 @@ namespace RatchetPieceTree
                 res = remove_from(recA.get(), recB.get(), recC.get(), offset, to_remove_from_first_found + to_remove_from_rest, buffers);
             }
 
-            for(auto it = res.begin(); it != res.end();++it){
+            for(auto it = res.nodes.begin(); it != res.nodes.end();++it){
                 resultChildren.push_back(std::move(*it));
             }
 
@@ -805,52 +808,53 @@ namespace RatchetPieceTree
                 resultChildren.push_back(allChildren[i]);
             }
 
-            ChildVector result;
+            TreeManipResult result;
+            result.depth = res.depth+1;
             if(resultChildren.size() > MaxChildren*3)
             {
                 size_t from = 0;
                 size_t perChild = resultChildren.size()/4;
 
-                result.push_back(construct_internal(resultChildren, from, from+perChild));
+                result.nodes.push_back(construct_internal(resultChildren, from, from+perChild));
                 from+=perChild;
                 if(resultChildren.size()%4 > 1)
                 {
                     perChild+=1;
                 }
-                result.push_back(construct_internal(resultChildren, from, from+perChild));
+                result.nodes.push_back(construct_internal(resultChildren, from, from+perChild));
                 from+=perChild;
-                result.push_back(construct_internal(resultChildren, from, from+perChild));
+                result.nodes.push_back(construct_internal(resultChildren, from, from+perChild));
                 from+=perChild;
-                result.push_back(construct_internal(resultChildren, from, resultChildren.size()));
+                result.nodes.push_back(construct_internal(resultChildren, from, resultChildren.size()));
             }
             else if(resultChildren.size() > MaxChildren*2)
             {
                 size_t from = 0;
                 size_t perChild = resultChildren.size()/3;
 
-                result.push_back(construct_internal(resultChildren, from, from+perChild));
+                result.nodes.push_back(construct_internal(resultChildren, from, from+perChild));
                 from+=perChild;
                 if(resultChildren.size()%3 > 1)
                 {
                     perChild+=1;
                 }
-                result.push_back(construct_internal(resultChildren, from, from+perChild));
+                result.nodes.push_back(construct_internal(resultChildren, from, from+perChild));
                 from+=perChild;
-                result.push_back(construct_internal(resultChildren, from, resultChildren.size()));
+                result.nodes.push_back(construct_internal(resultChildren, from, resultChildren.size()));
             }
             else if(resultChildren.size() > MaxChildren)
             {
                 size_t from = 0;
                 size_t mid = resultChildren.size()/2;
-                result.push_back(construct_internal(resultChildren, from, from+mid));
+                result.nodes.push_back(construct_internal(resultChildren, from, from+mid));
 
-                result.push_back(construct_internal(resultChildren, mid, resultChildren.size()));
+                result.nodes.push_back(construct_internal(resultChildren, mid, resultChildren.size()));
 
             }
             else
             {
-                assert(result.size() >= MaxChildren/2 || c==nullptr);
-                result.push_back(construct_internal(resultChildren, 0, resultChildren.size()));
+                assert(result.nodes.size() >= MaxChildren/2 || c==nullptr);
+                result.nodes.push_back(construct_internal(resultChildren, 0, resultChildren.size()));
             }
 
             return result;
