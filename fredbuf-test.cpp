@@ -3,14 +3,20 @@
 #include <format>
 #include <source_location>
 
-#include "fredbuf.cpp"
+#include "arena.h"
+#include "fred-strings.h"
+#include "fredbuf.h"
+
+// Debug helper from fredbuf.cpp.
+void print_buffer(const PieceTree::Tree* tree);
 
 void assume_buffer_snapshots(const PieceTree::Tree* tree, std::string_view expected, PieceTree::CharOffset offset, std::source_location locus)
 {
     // Owning snapshot.
     {
-        auto owning_snap = tree->owning_snap();
-        PieceTree::TreeWalker walker{ &owning_snap, offset };
+        auto scratch = Arena::scratch_begin(Arena::no_conflicts);
+        auto* owning_snap = tree->owning_snap(scratch.arena);
+        PieceTree::TreeWalker walker{ scratch.arena, owning_snap, offset };
         std::string buf;
         while (not walker.exhausted())
         {
@@ -24,11 +30,13 @@ void assume_buffer_snapshots(const PieceTree::Tree* tree, std::string_view expec
             fprintf(stderr, "%s\n", s.c_str());
             assert(false);
         }
+        Arena::scratch_end(scratch);
     }
     // Reference snapshot.
     {
+        auto scratch = Arena::scratch_begin(Arena::no_conflicts);
         auto owning_snap = tree->ref_snap();
-        PieceTree::TreeWalker walker{ &owning_snap, offset };
+        PieceTree::TreeWalker walker{ scratch.arena, &owning_snap, offset };
         std::string buf;
         while (not walker.exhausted())
         {
@@ -42,12 +50,14 @@ void assume_buffer_snapshots(const PieceTree::Tree* tree, std::string_view expec
             fprintf(stderr, "%s\n", s.c_str());
             assert(false);
         }
+        Arena::scratch_end(scratch);
     }
 }
 
 void assume_reverse_buffer(const PieceTree::Tree* tree, std::string_view forward_buf, PieceTree::CharOffset offset, std::source_location locus)
 {
-    PieceTree::ReverseTreeWalker walker{ tree, offset };
+    auto scratch = Arena::scratch_begin(Arena::no_conflicts);
+    PieceTree::ReverseTreeWalker walker{ scratch.arena, tree, offset };
     std::string buf;
     while (not walker.exhausted())
     {
@@ -65,12 +75,14 @@ void assume_reverse_buffer(const PieceTree::Tree* tree, std::string_view forward
         fprintf(stderr, "%s\n", s.c_str());
         assert(false);
     }
+    Arena::scratch_end(scratch);
 }
 
 void assume_buffer(const PieceTree::Tree* tree, std::string_view expected, std::source_location locus = std::source_location::current())
 {
+    auto scratch = Arena::scratch_begin(Arena::no_conflicts);
     constexpr auto start = PieceTree::CharOffset{ 0 };
-    PieceTree::TreeWalker walker{ tree, start };
+    PieceTree::TreeWalker walker{ scratch.arena, tree, start };
     std::string buf;
     while (not walker.exhausted())
     {
@@ -86,453 +98,483 @@ void assume_buffer(const PieceTree::Tree* tree, std::string_view expected, std::
     }
     assume_buffer_snapshots(tree, expected, start, locus);
     assume_reverse_buffer(tree, buf, start + retract(tree->length()), locus);
+    Arena::scratch_end(scratch);
 }
 
 using namespace PieceTree;
 void test1()
 {
-    TreeBuilder builder;
+    auto scratch = Arena::scratch_begin(Arena::no_conflicts);
+    TreeBuilder builder = tree_builder_start(scratch.arena);
     std::string buf;
-    builder.accept("A\nB\nC\nD");
-    auto tree = builder.create();
-    assume_buffer(&tree, "A\nB\nC\nD");
+    tree_builder_accept(scratch.arena, &builder, str8_mut(str8_literal("A\nB\nC\nD")));
+    Tree* tree = tree_builder_finish(&builder);
+    assume_buffer(tree, "A\nB\nC\nD");
 
-    tree.remove(CharOffset{ 4 }, Length{ 1 });
-    tree.remove(CharOffset{ 3 }, Length{ 1 });
+    tree->remove(CharOffset{ 4 }, Length{ 1 });
+    tree->remove(CharOffset{ 3 }, Length{ 1 });
 
-    print_buffer(&tree);
-    assume_buffer(&tree, "A\nB\nD");
+    print_buffer(tree);
+    assume_buffer(tree, "A\nB\nD");
+
+    release_tree(tree);
+    Arena::scratch_end(scratch);
 }
 
 void test2()
 {
-    TreeBuilder builder;
-    std::string buf;
-    auto tree = builder.create();
-    tree.insert(CharOffset{ 0 } + tree.length(), "a");
-    tree.insert(CharOffset{ 0 } + tree.length(), "s");
-    tree.insert(CharOffset{ 0 } + tree.length(), "d");
-    tree.insert(CharOffset{ 0 } + tree.length(), "f");
-    tree.insert(CharOffset{ 0 } + tree.length(), "\n");
-    tree.insert(CharOffset{ 0 } + tree.length(), "a");
-    tree.insert(CharOffset{ 0 } + tree.length(), "s");
-    tree.insert(CharOffset{ 0 } + tree.length(), "d");
-    tree.insert(CharOffset{ 0 } + tree.length(), "f");
-    tree.insert(CharOffset{ 0 } + tree.length(), "\n");
-    tree.insert(CharOffset{ 0 } + tree.length(), "a");
-    tree.insert(CharOffset{ 0 } + tree.length(), "s");
-    tree.insert(CharOffset{ 0 } + tree.length(), "d");
-    tree.insert(CharOffset{ 0 } + tree.length(), "f");
-    tree.insert(CharOffset{ 0 } + tree.length(), "\n");
-    tree.insert(CharOffset{ 0 } + tree.length(), "a");
-    tree.insert(CharOffset{ 0 } + tree.length(), "s");
-    tree.insert(CharOffset{ 0 } + tree.length(), "d");
-    tree.insert(CharOffset{ 0 } + tree.length(), "f");
-    tree.insert(CharOffset{ 0 } + tree.length(), "\n");
+    auto scratch = Arena::scratch_begin(Arena::no_conflicts);
+    TreeBuilder builder = tree_builder_start(scratch.arena);
+    auto tree = tree_builder_finish(&builder);
+    tree->insert(CharOffset{ 0 } + tree->length(), str8_mut(str8_literal("a")));
+    tree->insert(CharOffset{ 0 } + tree->length(), str8_mut(str8_literal("s")));
+    tree->insert(CharOffset{ 0 } + tree->length(), str8_mut(str8_literal("d")));
+    tree->insert(CharOffset{ 0 } + tree->length(), str8_mut(str8_literal("f")));
+    tree->insert(CharOffset{ 0 } + tree->length(), str8_mut(str8_literal("\n")));
+    tree->insert(CharOffset{ 0 } + tree->length(), str8_mut(str8_literal("a")));
+    tree->insert(CharOffset{ 0 } + tree->length(), str8_mut(str8_literal("s")));
+    tree->insert(CharOffset{ 0 } + tree->length(), str8_mut(str8_literal("d")));
+    tree->insert(CharOffset{ 0 } + tree->length(), str8_mut(str8_literal("f")));
+    tree->insert(CharOffset{ 0 } + tree->length(), str8_mut(str8_literal("\n")));
+    tree->insert(CharOffset{ 0 } + tree->length(), str8_mut(str8_literal("a")));
+    tree->insert(CharOffset{ 0 } + tree->length(), str8_mut(str8_literal("s")));
+    tree->insert(CharOffset{ 0 } + tree->length(), str8_mut(str8_literal("d")));
+    tree->insert(CharOffset{ 0 } + tree->length(), str8_mut(str8_literal("f")));
+    tree->insert(CharOffset{ 0 } + tree->length(), str8_mut(str8_literal("\n")));
+    tree->insert(CharOffset{ 0 } + tree->length(), str8_mut(str8_literal("a")));
+    tree->insert(CharOffset{ 0 } + tree->length(), str8_mut(str8_literal("s")));
+    tree->insert(CharOffset{ 0 } + tree->length(), str8_mut(str8_literal("d")));
+    tree->insert(CharOffset{ 0 } + tree->length(), str8_mut(str8_literal("f")));
+    tree->insert(CharOffset{ 0 } + tree->length(), str8_mut(str8_literal("\n")));
 #if 1
-    tree.insert(CharOffset{ 1 }, "a");
-    tree.insert(CharOffset{ 2 }, "s");
-    tree.insert(CharOffset{ 3 }, "d");
-    tree.insert(CharOffset{ 4 }, "f");
-    tree.insert(CharOffset{ 5 }, "\n");
-    tree.insert(CharOffset{ 6 }, "a");
-    tree.insert(CharOffset{ 12 }, "s");
-    tree.insert(CharOffset{ 15 }, "d");
-    tree.insert(CharOffset{ 17 }, "f");
-    tree.insert(CharOffset{ 18 }, "\n");
-    tree.insert(CharOffset{ 2 }, "a");
-    tree.insert(CharOffset{ 21 }, "s");
-    tree.insert(CharOffset{ 21 }, "d");
-    tree.insert(CharOffset{ 23 }, "f");
-    tree.insert(CharOffset{ 29 }, "\n");
-    tree.insert(CharOffset{ 30 }, "a");
-    tree.insert(CharOffset{ 0 }, "s");
-    tree.insert(CharOffset{ 1 }, "d");
-    tree.insert(CharOffset{ 10 }, "f");
-    tree.insert(CharOffset{ 11 }, "\n");
+    tree->insert(CharOffset{ 1 }, str8_mut(str8_literal("a")));
+    tree->insert(CharOffset{ 2 }, str8_mut(str8_literal("s")));
+    tree->insert(CharOffset{ 3 }, str8_mut(str8_literal("d")));
+    tree->insert(CharOffset{ 4 }, str8_mut(str8_literal("f")));
+    tree->insert(CharOffset{ 5 }, str8_mut(str8_literal("\n")));
+    tree->insert(CharOffset{ 6 }, str8_mut(str8_literal("a")));
+    tree->insert(CharOffset{ 12 }, str8_mut(str8_literal("s")));
+    tree->insert(CharOffset{ 15 }, str8_mut(str8_literal("d")));
+    tree->insert(CharOffset{ 17 }, str8_mut(str8_literal("f")));
+    tree->insert(CharOffset{ 18 }, str8_mut(str8_literal("\n")));
+    tree->insert(CharOffset{ 2 }, str8_mut(str8_literal("a")));
+    tree->insert(CharOffset{ 21 }, str8_mut(str8_literal("s")));
+    tree->insert(CharOffset{ 21 }, str8_mut(str8_literal("d")));
+    tree->insert(CharOffset{ 23 }, str8_mut(str8_literal("f")));
+    tree->insert(CharOffset{ 29 }, str8_mut(str8_literal("\n")));
+    tree->insert(CharOffset{ 30 }, str8_mut(str8_literal("a")));
+    tree->insert(CharOffset{ 0 }, str8_mut(str8_literal("s")));
+    tree->insert(CharOffset{ 1 }, str8_mut(str8_literal("d")));
+    tree->insert(CharOffset{ 10 }, str8_mut(str8_literal("f")));
+    tree->insert(CharOffset{ 11 }, str8_mut(str8_literal("\n")));
 #endif
     auto line = Line{ 1 };
-    auto range = tree.get_line_range(line);
+    auto range = tree->get_line_range(line);
     printf("Line{%zu} range: first{%zu} last{%zu}\n", line, range.first, range.last);
-    tree.get_line_content(&buf, line);
-    printf("content: %s\n", buf.c_str());
-    printf("Line number: %zu\n", tree.line_at(range.first));
+    String8 buf = tree->get_line_content(scratch.arena, line);
+    printf("content: %s\n", buf.str);
+    printf("Line number: %zu\n", tree->line_at(range.first));
 
-    print_buffer(&tree);
+    print_buffer(tree);
 
-    tree.remove(CharOffset{ 5 }, Length{ 1 });
-    tree.remove(CharOffset{ 5 }, Length{ 1 });
-    tree.remove(CharOffset{ 5 }, Length{ 1 });
-    tree.remove(CharOffset{ 5 }, Length{ 1 });
-    tree.remove(CharOffset{ 5 }, Length{ 1 });
-    tree.remove(CharOffset{ 5 }, Length{ 1 });
-    tree.remove(CharOffset{ 5 }, Length{ 1 });
-    tree.remove(CharOffset{ 5 }, Length{ 1 });
-    tree.remove(CharOffset{ 5 }, Length{ 1 });
-    tree.remove(CharOffset{ 5 }, Length{ 1 });
-    tree.remove(CharOffset{ 5 }, Length{ 1 });
-    tree.remove(CharOffset{ 5 }, Length{ 1 });
-    tree.remove(CharOffset{ 5 }, Length{ 1 });
-    tree.remove(CharOffset{ 5 }, Length{ 1 });
-    tree.remove(CharOffset{ 5 }, Length{ 1 });
+    tree->remove(CharOffset{ 5 }, Length{ 1 });
+    tree->remove(CharOffset{ 5 }, Length{ 1 });
+    tree->remove(CharOffset{ 5 }, Length{ 1 });
+    tree->remove(CharOffset{ 5 }, Length{ 1 });
+    tree->remove(CharOffset{ 5 }, Length{ 1 });
+    tree->remove(CharOffset{ 5 }, Length{ 1 });
+    tree->remove(CharOffset{ 5 }, Length{ 1 });
+    tree->remove(CharOffset{ 5 }, Length{ 1 });
+    tree->remove(CharOffset{ 5 }, Length{ 1 });
+    tree->remove(CharOffset{ 5 }, Length{ 1 });
+    tree->remove(CharOffset{ 5 }, Length{ 1 });
+    tree->remove(CharOffset{ 5 }, Length{ 1 });
+    tree->remove(CharOffset{ 5 }, Length{ 1 });
+    tree->remove(CharOffset{ 5 }, Length{ 1 });
+    tree->remove(CharOffset{ 5 }, Length{ 1 });
 
-    print_buffer(&tree);
-    assume_buffer(&tree, "sdaaadff\n\ndsfasdf\n\naasdf\n");
+    print_buffer(tree);
+    assume_buffer(tree, "sdaaadff\n\ndsfasdf\n\naasdf\n");
+
+    release_tree(tree);
+    Arena::scratch_end(scratch);
 }
 
 void test3()
 {
-    TreeBuilder builder;
-    builder.accept("Hello");
-    builder.accept(",");
-    builder.accept(" ");
-    builder.accept("World");
-    builder.accept("!");
-    builder.accept("\nThis is a second line.");
-    builder.accept(" Continue...\nANOTHER!");
+    auto scratch = Arena::scratch_begin(Arena::no_conflicts);
+    TreeBuilder builder = tree_builder_start(scratch.arena);
+    tree_builder_accept(scratch.arena, &builder, str8_mut(str8_literal("Hello")));
+    tree_builder_accept(scratch.arena, &builder, str8_mut(str8_literal(",")));
+    tree_builder_accept(scratch.arena, &builder, str8_mut(str8_literal(" ")));
+    tree_builder_accept(scratch.arena, &builder, str8_mut(str8_literal("World")));
+    tree_builder_accept(scratch.arena, &builder, str8_mut(str8_literal("!")));
+    tree_builder_accept(scratch.arena, &builder, str8_mut(str8_literal("\nThis is a second line.")));
+    tree_builder_accept(scratch.arena, &builder, str8_mut(str8_literal(" Continue...\nANOTHER!")));
 
-    auto tree = builder.create();
+    Tree* tree = tree_builder_finish(&builder);
 
-    print_tree(tree);
+    print_tree(*tree);
 
-    std::string buf;
+    String8 buf;
 
     printf("line content at 1:\n");
-    tree.get_line_content(&buf, Line{ 1 });
-    printf("%.*s\n", int(buf.size()), buf.c_str());
+    buf = tree->get_line_content(scratch.arena, Line{ 1 });
+    printf("%.*s\n", int(buf.size), buf.str);
 
     printf("line content at 2:\n");
-    tree.get_line_content(&buf, Line{ 2 });
-    printf("%.*s\n", int(buf.size()), buf.c_str());
+    buf = tree->get_line_content(scratch.arena, Line{ 2 });
+    printf("%.*s\n", int(buf.size), buf.str);
 
     printf("line content at 3:\n");
-    tree.get_line_content(&buf, Line{ 3 });
-    printf("%.*s\n", int(buf.size()), buf.c_str());
+    buf = tree->get_line_content(scratch.arena, Line{ 3 });
+    printf("%.*s\n", int(buf.size), buf.str);
 
-    tree.insert(CharOffset{ 37 }, "Hello");
+    tree->insert(CharOffset{ 37 }, str8_mut(str8_literal("Hello")));
 
     printf("line content at 1:\n");
-    tree.get_line_content(&buf, Line{ 1 });
-    printf("%.*s\n", int(buf.size()), buf.c_str());
+    buf = tree->get_line_content(scratch.arena, Line{ 1 });
+    printf("%.*s\n", int(buf.size), buf.str);
 
     printf("line content at 2:\n");
-    tree.get_line_content(&buf, Line{ 2 });
-    printf("%.*s\n", int(buf.size()), buf.c_str());
+    buf = tree->get_line_content(scratch.arena, Line{ 2 });
+    printf("%.*s\n", int(buf.size), buf.str);
 
-    print_buffer(&tree);
+    print_buffer(tree);
 
     auto off = CharOffset{ 13 };
     auto len = Length{ 5 };
     printf("--- Delete at off{%zu}, len{%zu} ---\n", off, len);
-    tree.remove(off, len);
+    tree->remove(off, len);
 
 #if 0
     printf("line content at 1:\n");
-    tree.get_line_content(&buf, Line{ 1 });
-    printf("%.*s\n", int(buf.size()), buf.c_str());
+    buf = tree->get_line_content(scratch.arena, Line{ 1 });
+    printf("%.*s\n", int(buf.size), buf.str);
 
     printf("line content at 2:\n");
-    tree.get_line_content(&buf, Line{ 2 });
-    printf("%.*s\n", int(buf.size()), buf.c_str());
+    buf = tree->get_line_content(scratch.arena, Line{ 2 });
+    printf("%.*s\n", int(buf.size), buf.str);
 #endif
 
-    print_buffer(&tree);
+    print_buffer(tree);
 
     off = CharOffset{ 37 };
     len = Length{ 5 };
     printf("--- Delete at off{%zu}, len{%zu} ---\n", off, len);
-    tree.remove(off, len);
+    tree->remove(off, len);
 
 #if 0
     printf("line content at 1:\n");
-    tree.get_line_content(&buf, Line{ 1 });
-    printf("%.*s\n", int(buf.size()), buf.c_str());
+    buf = tree->get_line_content(scratch.arena, Line{ 1 });
+    printf("%.*s\n", int(buf.size), buf.str);
 
     printf("line content at 2:\n");
-    tree.get_line_content(&buf, Line{ 2 });
-    printf("%.*s\n", int(buf.size()), buf.c_str());
+    buf = tree->get_line_content(scratch.arena, Line{ 2 });
+    printf("%.*s\n", int(buf.size), buf.str);
 #endif
 
-    print_buffer(&tree);
+    print_buffer(tree);
 
-    tree.insert(CharOffset{ 0 } + tree.length(), "a");
-    print_buffer(&tree);
+    tree->insert(CharOffset{ 0 } + tree->length(), str8_mut(str8_literal("a")));
+    print_buffer(tree);
 
-    tree.insert(CharOffset{ 0 } + tree.length(), "a");
-    print_buffer(&tree);
+    tree->insert(CharOffset{ 0 } + tree->length(), str8_mut(str8_literal("a")));
+    print_buffer(tree);
 
-    tree.insert(CharOffset{ 0 } + tree.length(), "a");
-    print_buffer(&tree);
+    tree->insert(CharOffset{ 0 } + tree->length(), str8_mut(str8_literal("a")));
+    print_buffer(tree);
 
-    tree.insert(CharOffset{ 0 } + tree.length(), "a");
-    print_buffer(&tree);
+    tree->insert(CharOffset{ 0 } + tree->length(), str8_mut(str8_literal("a")));
+    print_buffer(tree);
 
-    tree.insert(CharOffset{ 0 } + tree.length(), "END!!");
-    print_buffer(&tree);
+    tree->insert(CharOffset{ 0 } + tree->length(), str8_mut(str8_literal("END!!")));
+    print_buffer(tree);
 
-    tree.remove(CharOffset{ 52 }, Length{ 4 });
-    print_buffer(&tree);
+    tree->remove(CharOffset{ 52 }, Length{ 4 });
+    print_buffer(tree);
 
-    //print_buffer(&tree, CharOffset{ 26 });
+    //print_buffer(tree, CharOffset{ 26 });
 
-    tree.insert(CharOffset{} + tree.length(), "\nfoobar\nnext\nnextnext\nnextnextnext");
-    tree.insert(CharOffset{} + tree.length(), "\nfoobar2\nnext\nnextnext\nnextnextnext");
+    tree->insert(CharOffset{} + tree->length(), str8_mut(str8_literal("\nfoobar\nnext\nnextnext\nnextnextnext")));
+    tree->insert(CharOffset{} + tree->length(), str8_mut(str8_literal("\nfoobar2\nnext\nnextnext\nnextnextnext")));
 
-    print_buffer(&tree);
+    print_buffer(tree);
 
-    auto total_lines = Line{ rep(tree.line_feed_count()) + 1 };
+    auto total_lines = Line{ rep(tree->line_feed_count()) + 1 };
     for (Line line = Line{ 1 }; line <= total_lines;line = extend(line))
     {
-        auto range = tree.get_line_range(line);
+        auto range = tree->get_line_range(line);
         printf("Line{%zu} range: first{%zu} last{%zu}\n", line, range.first, range.last);
-        tree.get_line_content(&buf, line);
-        printf("content: %s\n", buf.c_str());
-        printf("Line number: %zu\n", tree.line_at(range.first));
+        buf = tree->get_line_content(scratch.arena, line);
+        printf("content: %s\n", buf.str);
+        printf("Line number: %zu\n", tree->line_at(range.first));
     }
 
     printf("out of range line:\n");
-    auto range = tree.get_line_range(Line{ 99 });
+    auto range = tree->get_line_range(Line{ 99 });
     printf("Line{%zu} range: first{%zu} last{%zu}\n", size_t{99}, range.first, range.last);
-    tree.get_line_content(&buf, Line{ 99 });
-    printf("content: %s\n", buf.c_str());
-    printf("Line number: %zu\n", tree.line_at(range.first));
+    buf = tree->get_line_content(scratch.arena, Line{ 99 });
+    printf("content: %s\n", buf.str);
+    printf("Line number: %zu\n", tree->line_at(range.first));
 #if 0
-    tree.remove(PieceTree::CharOffset{ 37 }, PieceTree::Length{ 5 });
+    tree->remove(PieceTree::CharOffset{ 37 }, PieceTree::Length{ 5 });
 
     printf("line content at 1:\n");
-    tree.get_line_content(&buf, PieceTree::Line{ 1 });
-    printf("%.*s\n", int(buf.size()), buf.c_str());
+    buf = tree->get_line_content(scratch.arena, PieceTree::Line{ 1 });
+    printf("%.*s\n", int(buf.size), buf.str);
 
     printf("line content at 2:\n");
-    tree.get_line_content(&buf, PieceTree::Line{ 2 });
-    printf("%.*s\n", int(buf.size()), buf.c_str());
+    buf = tree->get_line_content(scratch.arena, PieceTree::Line{ 2 });
+    printf("%.*s\n", int(buf.size), buf.str);
 
-    tree.remove(PieceTree::CharOffset{ 25 }, PieceTree::Length{ 5 });
+    tree->remove(PieceTree::CharOffset{ 25 }, PieceTree::Length{ 5 });
 
     printf("line content at 1:\n");
-    tree.get_line_content(&buf, PieceTree::Line{ 1 });
-    printf("%.*s\n", int(buf.size()), buf.c_str());
+    buf = tree->get_line_content(scratch.arena, PieceTree::Line{ 1 });
+    printf("%.*s\n", int(buf.size), buf.str);
 
     printf("line content at 2:\n");
-    tree.get_line_content(&buf, PieceTree::Line{ 2 });
-    printf("%.*s\n", int(buf.size()), buf.c_str());
+    buf = tree->get_line_content(scratch.arena, PieceTree::Line{ 2 });
+    printf("%.*s\n", int(buf.size), buf.str);
 #endif
+
+    release_tree(tree);
+    Arena::scratch_end(scratch);
 }
 
 void test4()
 {
-    TreeBuilder builder;
-    std::string buf;
-    builder.accept("ABCD");
-    auto tree = builder.create();
+    auto scratch = Arena::scratch_begin(Arena::no_conflicts);
+    TreeBuilder builder = tree_builder_start(scratch.arena);
+    tree_builder_accept(scratch.arena, &builder, str8_mut(str8_literal("ABCD")));
+    Tree* tree = tree_builder_finish(&builder);
 
-    tree.insert(CharOffset{4}, "a");
+    tree->insert(CharOffset{4}, str8_mut(str8_literal("a")));
 
-    assume_buffer(&tree, "ABCDa");
+    assume_buffer(tree, "ABCDa");
 
-    tree.remove(CharOffset{3}, Length{2});
+    tree->remove(CharOffset{3}, Length{2});
 
-    assume_buffer(&tree, "ABC");
+    assume_buffer(tree, "ABC");
+
+    release_tree(tree);
+    Arena::scratch_end(scratch);
 }
 
 void test5()
 {
-    TreeBuilder builder;
-    std::string buf;
-    builder.accept("");
-    auto tree = builder.create();
+    auto scratch = Arena::scratch_begin(Arena::no_conflicts);
+    TreeBuilder builder = tree_builder_start(scratch.arena);
+    tree_builder_accept(scratch.arena, &builder, str8_mut(str8_literal("")));
+    auto tree = tree_builder_finish(&builder);
 
-    tree.insert(CharOffset{ 0 }, "a");
+    tree->insert(CharOffset{ 0 }, str8_mut(str8_literal("a")));
 
-    assume_buffer(&tree, "a");
+    assume_buffer(tree, "a");
 
-    tree.remove(CharOffset{ 0 }, Length{ 1 });
+    tree->remove(CharOffset{ 0 }, Length{ 1 });
 
-    assume_buffer(&tree, "");
+    assume_buffer(tree, "");
+
+    release_tree(tree);
+    Arena::scratch_end(scratch);
 }
 
 void test6()
 {
-    TreeBuilder builder;
-    std::string buf;
-    builder.accept("Hello, World!");
-    auto tree = builder.create();
+    auto scratch = Arena::scratch_begin(Arena::no_conflicts);
+    TreeBuilder builder = tree_builder_start(scratch.arena);
+    tree_builder_accept(scratch.arena, &builder, str8_mut(str8_literal("Hello, World!")));
+    Tree* tree = tree_builder_finish(&builder);
 
-    tree.insert(CharOffset{ 0 }, "a");
-    tree.insert(CharOffset{ 1 }, "b");
-    tree.insert(CharOffset{ 2 }, "c");
+    tree->insert(CharOffset{ 0 }, str8_mut(str8_literal("a")));
+    tree->insert(CharOffset{ 1 }, str8_mut(str8_literal("b")));
+    tree->insert(CharOffset{ 2 }, str8_mut(str8_literal("c")));
 
-    assume_buffer(&tree, "abcHello, World!");
+    assume_buffer(tree, "abcHello, World!");
 
-    tree.remove(CharOffset{ 0 }, Length{ 3 });
+    tree->remove(CharOffset{ 0 }, Length{ 3 });
 
-    assume_buffer(&tree, "Hello, World!");
+    assume_buffer(tree, "Hello, World!");
 
-    auto r = tree.try_undo(CharOffset{ 0 });
+    auto r = tree->try_undo(CharOffset{ 0 });
     assert(r.success);
 
-    assume_buffer(&tree, "abcHello, World!");
+    assume_buffer(tree, "abcHello, World!");
 
-    r = tree.try_redo(CharOffset{ 0 });
+    r = tree->try_redo(CharOffset{ 0 });
     assert(r.success);
 
-    assume_buffer(&tree, "Hello, World!");
+    assume_buffer(tree, "Hello, World!");
 
-    r = tree.try_undo(CharOffset{ 0 });
+    r = tree->try_undo(CharOffset{ 0 });
     assert(r.success);
 
-    assume_buffer(&tree, "abcHello, World!");
+    assume_buffer(tree, "abcHello, World!");
 
-    r = tree.try_undo(CharOffset{ 0 });
+    r = tree->try_undo(CharOffset{ 0 });
     assert(r.success);
 
-    assume_buffer(&tree, "Hello, World!");
+    assume_buffer(tree, "Hello, World!");
 
-    r = tree.try_undo(CharOffset{ 0 });
+    r = tree->try_undo(CharOffset{ 0 });
     assert(not r.success);
 
-    r = tree.try_redo(CharOffset{ 0 });
+    r = tree->try_redo(CharOffset{ 0 });
     assert(r.success);
 
-    assume_buffer(&tree, "abcHello, World!");
+    assume_buffer(tree, "abcHello, World!");
 
-    r = tree.try_undo(CharOffset{ 0 });
+    r = tree->try_undo(CharOffset{ 0 });
     assert(r.success);
 
-    assume_buffer(&tree, "Hello, World!");
+    assume_buffer(tree, "Hello, World!");
 
     // Destroy the redo stack.
 
-    tree.insert(CharOffset{ 0 }, "NEW");
+    tree->insert(CharOffset{ 0 }, str8_mut(str8_literal("NEW")));
 
-    assume_buffer(&tree, "NEWHello, World!");
+    assume_buffer(tree, "NEWHello, World!");
 
-    r = tree.try_redo(CharOffset{ 0 });
+    r = tree->try_redo(CharOffset{ 0 });
     assert(not r.success);
 
-    r = tree.try_undo(CharOffset{ 0 });
+    r = tree->try_undo(CharOffset{ 0 });
     assert(r.success);
 
-    assume_buffer(&tree, "Hello, World!");
+    assume_buffer(tree, "Hello, World!");
+
+    release_tree(tree);
+    Arena::scratch_end(scratch);
 }
 
 void test7()
 {
-    TreeBuilder builder;
-    std::string buf;
-    builder.accept("ABC");
-    builder.accept("DEF");
-    auto tree = builder.create();
+    auto scratch = Arena::scratch_begin(Arena::no_conflicts);
+    TreeBuilder builder = tree_builder_start(scratch.arena);
+    tree_builder_accept(scratch.arena, &builder, str8_mut(str8_literal("ABC")));
+    tree_builder_accept(scratch.arena, &builder, str8_mut(str8_literal("DEF")));
+    Tree* tree = tree_builder_finish(&builder);
 
-    tree.insert(CharOffset{ 0 }, "foo");
+    tree->insert(CharOffset{ 0 }, str8_mut(str8_literal("foo")));
 
-    assume_buffer(&tree, "fooABCDEF");
+    assume_buffer(tree, "fooABCDEF");
 
-    tree.remove(CharOffset{ 6 }, Length{ 3 });
+    tree->remove(CharOffset{ 6 }, Length{ 3 });
 
-    assume_buffer(&tree, "fooABC");
+    assume_buffer(tree, "fooABC");
 
-    tree.get_line_content(&buf, Line{ 1 });
+    String8 buf = tree->get_line_content(scratch.arena, Line{ 1 });
 
-    assert(buf == "fooABC");
+    assert(str8_match_exact(buf, str8_mut(str8_literal("fooABC"))));
 
-    for (char c : buf)
+    for EachIndex(i, buf.size)
     {
-        printf("%c", c);
+        printf("%c", buf.str[i]);
     }
     printf("\n");
+
+    release_tree(tree);
+    Arena::scratch_end(scratch);
 }
 
 void test8()
 {
-    TreeBuilder builder;
-    std::string buf;
-    builder.accept("Hello, World!");
-    auto tree = builder.create();
+    auto scratch = Arena::scratch_begin(Arena::no_conflicts);
+    TreeBuilder builder = tree_builder_start(scratch.arena);
+    tree_builder_accept(scratch.arena, &builder, str8_mut(str8_literal("Hello, World!")));
+    Tree* tree = tree_builder_finish(&builder);
 
-    tree.insert(CharOffset{ 0 }, "a", PieceTree::SuppressHistory::Yes);
-    assume_buffer(&tree, "aHello, World!");
+    tree->insert(CharOffset{ 0 }, str8_mut(str8_literal("a")), PieceTree::SuppressHistory::Yes);
+    assume_buffer(tree, "aHello, World!");
 
-    auto r = tree.try_undo(CharOffset{ 0 });
+    auto r = tree->try_undo(CharOffset{ 0 });
     assert(not r.success);
 
-    tree.remove(CharOffset{ 0 }, Length{ 1 }, PieceTree::SuppressHistory::Yes);
-    assume_buffer(&tree, "Hello, World!");
+    tree->remove(CharOffset{ 0 }, Length{ 1 }, PieceTree::SuppressHistory::Yes);
+    assume_buffer(tree, "Hello, World!");
 
-    r = tree.try_undo(CharOffset{ 0 });
+    r = tree->try_undo(CharOffset{ 0 });
     assert(not r.success);
 
     // Snap back to "Hello, World!"
-    tree.commit_head(CharOffset{ 0 });
-    tree.insert(CharOffset{ 0 }, "a", PieceTree::SuppressHistory::Yes);
-    tree.insert(CharOffset{ 1 }, "b", PieceTree::SuppressHistory::Yes);
-    tree.insert(CharOffset{ 2 }, "c", PieceTree::SuppressHistory::Yes);
-    assume_buffer(&tree, "abcHello, World!");
+    tree->commit_head(CharOffset{ 0 });
+    tree->insert(CharOffset{ 0 }, str8_mut(str8_literal("a")), PieceTree::SuppressHistory::Yes);
+    tree->insert(CharOffset{ 1 }, str8_mut(str8_literal("b")), PieceTree::SuppressHistory::Yes);
+    tree->insert(CharOffset{ 2 }, str8_mut(str8_literal("c")), PieceTree::SuppressHistory::Yes);
+    assume_buffer(tree, "abcHello, World!");
 
-    r = tree.try_undo(CharOffset{ 0 });
+    r = tree->try_undo(CharOffset{ 0 });
     assert(r.success);
-    assume_buffer(&tree, "Hello, World!");
+    assume_buffer(tree, "Hello, World!");
 
     // Snap back to "Hello, World!"
-    tree.commit_head(CharOffset{ 0 });
-    tree.remove(CharOffset{ 0 }, Length{ 7 }, PieceTree::SuppressHistory::Yes);
-    assume_buffer(&tree, "World!");
+    tree->commit_head(CharOffset{ 0 });
+    tree->remove(CharOffset{ 0 }, Length{ 7 }, PieceTree::SuppressHistory::Yes);
+    assume_buffer(tree, "World!");
 
-    tree.remove(CharOffset{ 5 }, Length{ 1 }, PieceTree::SuppressHistory::Yes);
-    assume_buffer(&tree, "World");
+    tree->remove(CharOffset{ 5 }, Length{ 1 }, PieceTree::SuppressHistory::Yes);
+    assume_buffer(tree, "World");
 
-    r = tree.try_undo(CharOffset{ 0 });
+    r = tree->try_undo(CharOffset{ 0 });
     assert(r.success);
-    assume_buffer(&tree, "Hello, World!");
+    assume_buffer(tree, "Hello, World!");
 
-    r = tree.try_redo(CharOffset{ 0 });
-    assume_buffer(&tree, "World");
+    r = tree->try_redo(CharOffset{ 0 });
+    assume_buffer(tree, "World");
+
+    release_tree(tree);
+    Arena::scratch_end(scratch);
 }
 
 void test9()
 {
-    TreeBuilder builder;
-    std::string buf;
-    builder.accept("Hello, World!");
-    auto tree = builder.create();
+    auto scratch = Arena::scratch_begin(Arena::no_conflicts);
+    TreeBuilder builder = tree_builder_start(scratch.arena);
+    tree_builder_accept(scratch.arena, &builder, str8_mut(str8_literal("Hello, World!")));
+    Tree* tree = tree_builder_finish(&builder);
 
-    auto initial_commit = tree.head();
+    auto initial_commit = tree->head();
 
-    tree.insert(CharOffset{ 0 }, "a", PieceTree::SuppressHistory::Yes);
-    assume_buffer(&tree, "aHello, World!");
+    tree->insert(CharOffset{ 0 }, str8_mut(str8_literal("a")), PieceTree::SuppressHistory::Yes);
+    assume_buffer(tree, "aHello, World!");
 
-    auto r = tree.try_undo(CharOffset{ 0 });
+    auto r = tree->try_undo(CharOffset{ 0 });
     assert(not r.success);
 
-    auto commit = tree.head();
-    tree.snap_to(initial_commit);
-    assume_buffer(&tree, "Hello, World!");
+    auto commit = tree->head();
+    tree->snap_to(initial_commit);
+    assume_buffer(tree, "Hello, World!");
 
-    tree.snap_to(commit);
-    assume_buffer(&tree, "aHello, World!");
+    tree->snap_to(commit);
+    assume_buffer(tree, "aHello, World!");
 
-    tree.remove(CharOffset{ 0 }, Length{ 8 }, PieceTree::SuppressHistory::Yes);
-    assume_buffer(&tree, "World!");
+    tree->remove(CharOffset{ 0 }, Length{ 8 }, PieceTree::SuppressHistory::Yes);
+    assume_buffer(tree, "World!");
 
-    tree.snap_to(commit);
-    assume_buffer(&tree, "aHello, World!");
+    tree->snap_to(commit);
+    assume_buffer(tree, "aHello, World!");
 
-    tree.snap_to(initial_commit);
-    assume_buffer(&tree, "Hello, World!");
+    tree->snap_to(initial_commit);
+    assume_buffer(tree, "Hello, World!");
 
     // Create a new branch.
-    tree.insert(CharOffset{ 13 }, " My name is fredbuf.", PieceTree::SuppressHistory::Yes);
-    assume_buffer(&tree, "Hello, World! My name is fredbuf.");
+    tree->insert(CharOffset{ 13 }, str8_mut(str8_literal(" My name is fredbuf.")), PieceTree::SuppressHistory::Yes);
+    assume_buffer(tree, "Hello, World! My name is fredbuf.");
 
-    auto branch = tree.head();
+    auto branch = tree->head();
 
     // Revert back.
-    tree.snap_to(commit);
-    assume_buffer(&tree, "aHello, World!");
+    tree->snap_to(commit);
+    assume_buffer(tree, "aHello, World!");
 
     // Revert back to branch.
-    tree.snap_to(branch);
-    assume_buffer(&tree, "Hello, World! My name is fredbuf.");
+    tree->snap_to(branch);
+    assume_buffer(tree, "Hello, World! My name is fredbuf.");
+
+    release_tree(tree);
+    Arena::scratch_end(scratch);
 }
 
 #ifdef TIMING_DATA
@@ -727,6 +769,13 @@ passages, and more recently with desktop publishing software like Aldus PageMake
 
 int main()
 {
+    // Setup the scratch arenas.
+    Arena::Arena* scratch_arenas[2];
+    // Generally, you only need two arenas to handle all conflicts.
+    scratch_arenas[0] = Arena::alloc(Arena::default_params);
+    scratch_arenas[1] = Arena::alloc(Arena::default_params);
+    Arena::populate_scratch_arenas({ scratch_arenas, std::size(scratch_arenas) });
+
     test1();
     test2();
     test3();
@@ -736,7 +785,9 @@ int main()
     test7();
     test8();
     test9();
-#ifdef TIMING_DATA
-    time_buffer();
-#endif // TIMING_DATA
 }
+
+#include "arena.cpp"
+#include "fred-strings.cpp"
+#include "fredbuf.cpp"
+#include "os-cstd.cpp"

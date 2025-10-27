@@ -4,7 +4,6 @@
 
 #include "enum-utils.h"
 #include "macros.h"
-#include "os.h"
 #include "scope-guard.h"
 #include "util.h"
 
