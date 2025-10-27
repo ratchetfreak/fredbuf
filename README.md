@@ -8,41 +8,44 @@ Building:
 
 ```c++
 using namespace PieceTree;
-TreeBuilder builder;
-builder.accept("ABC");
-builder.accept("DEF");
-auto tree = builder.create();
+Arena::Arena* arena = Arena::alloc(Arena::default_params);
+TreeBuilder builder = tree_builder_start(arena);
+tree_builder_accept(arena, &builder, str8_mut(str8_literal("ABC")));
+tree_builder_accept(arena, &builder, str8_mut(str8_literal("DEF")));
+Tree* tree = tree_builder_finish(&builder);
 // Resulting total buffer: "ABCDEF"
 ```
 
 Insertion:
 
 ```c++
-tree.insert(CharOffset{ 0 }, "foo");
+tree->insert(CharOffset{ 0 }, str8_mut(str8_literal("foo")));
 // Resulting total buffer: "fooABCDEF"
 ```
 
 Deletion:
 
 ```c++
-tree.remove(CharOffset{ 6 }, Length{ 3 });
+tree->remove(CharOffset{ 6 }, Length{ 3 });
 // Resulting total buffer: "fooABC"
 ```
 
 Line retrieval:
 
 ```c++
-std::string buf;
-tree.get_line_content(&buf, Line{ 1 });
-// 'buf' contains "fooABC"
+// Note: The arena here does not need to be the tree's arena.
+String8 str = tree.get_line_content(arena, Line{ 1 });
+// 'str' contains "fooABC"
 ```
 
 Iteration:
 
 ```c++
-for (char c : buf)
+auto scratch = Arena::scratch_begin(Arena::no_conflicts);
+TreeWalker walker{ scratch.arena, tree };
+while (not walker.exhausted())
 {
-    printf("%c", c);
+    printf("%c", walker.next());
 }
 ```
 
