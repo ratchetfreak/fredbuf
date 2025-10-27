@@ -1,11 +1,7 @@
 #pragma once
 
-#include <forward_list>
-#include <memory>
-#include <string_view>
-#include <string>
-#include <vector>
-
+#include "arena.h"
+#include "fred-strings.h"
 #include "fredbuf-rbtree.h"
 #include "types.h"
 
@@ -20,17 +16,23 @@ namespace PieceTree
 {
     struct UndoRedoEntry
     {
+        UndoRedoEntry* next;
         RedBlackTree root;
         CharOffset op_offset;
     };
 
+    struct UndoRedoList
+    {
+        UndoRedoEntry* first;
+        UndoRedoEntry* last;
+        uint64_t count;
+    };
+
     // We need the ability to 'release' old entries in this stack.
-    using UndoStack = std::forward_list<UndoRedoEntry>;
-    using RedoStack = std::forward_list<UndoRedoEntry>;
+    using UndoStack = UndoRedoList;
+    using RedoStack = UndoRedoList;
 
     enum class LineStart : size_t { };
-
-    using LineStarts = std::vector<LineStart>;
 
     struct NodePosition
     {
@@ -44,29 +46,67 @@ namespace PieceTree
         Line line = { };
     };
 
+    struct LineStarts
+    {
+        LineStart* starts;
+        uint64_t count;
+    };
+
     struct CharBuffer
     {
-        std::string buffer;
+        String8 buffer;
         LineStarts line_starts;
     };
 
-    using BufferReference = std::shared_ptr<const CharBuffer>;
+    struct ModBuffer
+    {
+        String8 buffer;
+    };
 
-    using Buffers = std::vector<BufferReference>;
+    struct ImmutableBufferArray
+    {
+        const CharBuffer* buffers;
+        uint64_t count;
+        uint64_t* ref_count;
+    };
+
+    // Note: We add/remove from this list using atomic operations, which is why this is 16-byte aligned.
+    struct alignas(16) RBNodeFreeList
+    {
+        RBNodeCounted* head;
+        uint64_t tag;
+    };
+
+    struct RBTreeBlock
+    {
+        RBNodeFreeList free_list;
+        Arena::Arena* alloc_arena;
+    };
 
     struct BufferCollection
     {
         const CharBuffer* buffer_at(BufferIndex index) const;
         CharOffset buffer_offset(BufferIndex index, const BufferCursor& cursor) const;
 
-        Buffers orig_buffers;
+        // The immutable buffer arena is reused for arbitrary node building.
+        Arena::Arena* immutable_buf_arena;
+        Arena::Arena* undo_redo_stack_arena;
+        // The starts array and the buffer array need to be linearly growing arenas so
+        // we can quickly index into them since most operations will be O(lg n) to get
+        // to the buffer, we want an O(1) operation to offset into the actual data.
+        Arena::Arena* mut_buf_starts_arena;
+        Arena::Arena* mut_buf_arena;
+        ImmutableBufferArray orig_buffers;
         CharBuffer mod_buffer;
+        RBTreeBlock* rb_tree_blk;
     };
 
     struct LineRange
     {
         CharOffset first;
         CharOffset last; // Does not include LF.
+
+        bool operator==(const LineRange&) const = default;
     };
 
     struct UndoRedoResult
@@ -97,18 +137,21 @@ namespace PieceTree
     // Indicates whether or not line was missing a CR (e.g. only a '\n' was at the end).
     enum class IncompleteCRLF : bool { No, Yes };
 
+    // Buffer collection management.
+    void dec_buffer_ref(BufferCollection* collection);
+    BufferCollection take_buffer_ref(const BufferCollection* collection);
+
     class Tree
     {
     public:
-        explicit Tree();
-        explicit Tree(Buffers&& buffers);
+        explicit Tree(BufferCollection buffers);
 
         // Interface.
         // Initialization after populating initial immutable buffers from ctor.
         void build_tree();
 
         // Manipulation.
-        void insert(CharOffset offset, std::string_view txt, SuppressHistory suppress_history = SuppressHistory::No);
+        void insert(CharOffset offset, String8 txt, SuppressHistory suppress_history = SuppressHistory::No);
         void remove(CharOffset offset, Length count, SuppressHistory suppress_history = SuppressHistory::No);
         UndoRedoResult try_undo(CharOffset op_offset);
         UndoRedoResult try_redo(CharOffset op_offset);
@@ -122,8 +165,8 @@ namespace PieceTree
         void snap_to(const RedBlackTree& new_root);
 
         // Queries.
-        void get_line_content(std::string* buf, Line line) const;
-        [[nodiscard]] IncompleteCRLF get_line_content_crlf(std::string* buf, Line line) const;
+        String8 get_line_content(Arena::Arena* arena, Line line) const;
+        [[nodiscard]] IncompleteCRLF get_line_content_crlf(Arena::Arena* arena, String8* buf, Line line) const;
         char at(CharOffset offset) const;
         Line line_at(CharOffset offset) const;
         LineRange get_line_range(Line line) const;
@@ -150,8 +193,11 @@ namespace PieceTree
             return Length{ rep(line_feed_count()) + 1 };
         }
 
-        OwningSnapshot owning_snap() const;
+        OwningSnapshot* owning_snap(Arena::Arena* arena) const;
         ReferenceSnapshot ref_snap() const;
+
+        // Note, this will not increment refs.  That must be done by the caller.
+        BufferCollection buffer_collection_no_ref() const;
     private:
         friend class TreeWalker;
         friend class ReverseTreeWalker;
@@ -161,7 +207,7 @@ namespace PieceTree
         friend void print_piece(const Piece& piece, const Tree* tree, int level);
         friend void print_tree(const Tree& tree);
 #endif // TEXTBUF_DEBUG
-        void internal_insert(CharOffset offset, std::string_view txt);
+        void internal_insert(CharOffset offset, String8 txt);
         void internal_remove(CharOffset offset, Length count);
 
         using Accumulator = Length(*)(const BufferCollection*, const Piece&, Line);
@@ -171,8 +217,8 @@ namespace PieceTree
         static void line_end_crlf(CharOffset* offset, const BufferCollection* buffers, const RedBlackTree& root, const RedBlackTree& node, Line line);
         static Length accumulate_value(const BufferCollection* buffers, const Piece& piece, Line index);
         static Length accumulate_value_no_lf(const BufferCollection* buffers, const Piece& piece, Line index);
-        static void populate_from_node(std::string* buf, const BufferCollection* buffers, const RedBlackTree& node);
-        static void populate_from_node(std::string* buf, const BufferCollection* buffers, const RedBlackTree& node, Line line_index);
+        static void populate_from_node(Arena::Arena* arena, String8List* lst, const BufferCollection* buffers, const RedBlackTree& node);
+        static void populate_from_node(Arena::Arena* arena, String8List* lst, const BufferCollection* buffers, const RedBlackTree& node, Line line_index);
         static LFCount line_feed_count(const BufferCollection* buffers, BufferIndex index, const BufferCursor& start, const BufferCursor& end);
         static NodePosition node_at(const BufferCollection* buffers, RedBlackTree node, CharOffset off);
         static BufferCursor buffer_position(const BufferCollection* buffers, const Piece& piece, Length remainder);
@@ -187,37 +233,68 @@ namespace PieceTree
         };
 
         static ShrinkResult shrink_piece(const BufferCollection* buffers, const Piece& piece, const BufferCursor& first, const BufferCursor& last);
+        static String8 assemble_line(Arena::Arena* arena, const BufferCollection* buffers, const BufferMeta& meta, const RedBlackTree& node, Line line);
 
         // Direct mutations.
-        void assemble_line(std::string* buf, const RedBlackTree& node, Line line) const;
-        Piece build_piece(std::string_view txt);
+        Piece build_piece(String8 txt);
         void combine_pieces(NodePosition existing_piece, Piece new_piece);
         void remove_node_range(NodePosition first, Length length);
         void compute_buffer_meta();
         void append_undo(const RedBlackTree& old_root, CharOffset op_offset);
 
-        BufferCollection buffers;
+        BufferCollection buffers{};
         //Buffers buffers;
         //CharBuffer mod_buffer;
         PieceTree::RedBlackTree root;
-        LineStarts scratch_starts;
         BufferCursor last_insert;
         // Note: This is absolute position.  Initialize to nonsense value.
         CharOffset end_last_insert = CharOffset::Sentinel;
         BufferMeta meta;
-        UndoStack undo_stack;
-        RedoStack redo_stack;
+        UndoStack undo_stack{};
+        RedoStack redo_stack{};
+        UndoRedoEntry* free_undo_list{};
     };
+
+    // Tree building.
+    struct ImmutableBufferNode
+    {
+        ImmutableBufferNode* next;
+        CharBuffer buffer;
+    };
+
+    struct ImmutableBufferList
+    {
+        ImmutableBufferNode* first;
+        ImmutableBufferNode* last;
+        uint64_t count;
+    };
+
+    struct TreeBuilder
+    {
+        Arena::Arena* immutable_buf_arena;
+        Arena::Arena* undo_redo_stack_arena;
+        Arena::Arena* mut_buf_starts_arena;
+        Arena::Arena* mut_buf_arena;
+        ImmutableBufferList buffers;
+    };
+
+    // Building/release.
+    TreeBuilder tree_builder_start(Arena::Arena* buffer_arena);
+    void tree_builder_accept(Arena::Arena* arena, TreeBuilder* builder, String8 txt);
+    Tree* tree_builder_finish(TreeBuilder* builder);
+    Tree* tree_builder_empty(Arena::Arena* buffer_arena);
+    void release_tree(Tree* tree);
 
     class OwningSnapshot
     {
     public:
-        explicit OwningSnapshot(const Tree* tree);
-        explicit OwningSnapshot(const Tree* tree, const RedBlackTree& dt);
+        explicit OwningSnapshot(Arena::Arena* mut_buf_arena, const Tree* tree);
+        explicit OwningSnapshot(Arena::Arena* mut_buf_arena, const Tree* tree, const RedBlackTree& dt);
 
         // Queries.
-        void get_line_content(std::string* buf, Line line) const;
-        [[nodiscard]] IncompleteCRLF get_line_content_crlf(std::string* buf, Line line) const;
+        String8 get_line_content(Arena::Arena* arena, Line line) const;
+        [[nodiscard]] IncompleteCRLF get_line_content_crlf(Arena::Arena* arena, String8* buf, Line line) const;
+        char at(CharOffset offset) const;
         Line line_at(CharOffset offset) const;
         LineRange get_line_range(Line line) const;
         LineRange get_line_range_crlf(Line line) const;
@@ -231,6 +308,14 @@ namespace PieceTree
         {
             return Length{ rep(meta.lf_count) + 1 };
         }
+
+        Length length() const
+        {
+            return meta.total_content_length;
+        }
+
+        // Note, this will not increment refs.  That must be done by the caller.
+        BufferCollection buffer_collection_no_ref() const;
     private:
         friend class TreeWalker;
         friend class ReverseTreeWalker;
@@ -239,18 +324,25 @@ namespace PieceTree
         BufferMeta meta;
         // This should be fairly lightweight.  The original buffers
         // will retain the majority of the memory consumption.
+        // This object only copies the underlying mutable buffer locally.
         BufferCollection buffers;
     };
+
+    void release_owning_snap(OwningSnapshot* snap);
 
     class ReferenceSnapshot
     {
     public:
         explicit ReferenceSnapshot(const Tree* tree);
         explicit ReferenceSnapshot(const Tree* tree, const RedBlackTree& dt);
+        ReferenceSnapshot(const ReferenceSnapshot&);
+        ReferenceSnapshot& operator=(const ReferenceSnapshot&);
+        ~ReferenceSnapshot();
 
         // Queries.
-        void get_line_content(std::string* buf, Line line) const;
-        [[nodiscard]] IncompleteCRLF get_line_content_crlf(std::string* buf, Line line) const;
+        String8 get_line_content(Arena::Arena* arena, Line line) const;
+        [[nodiscard]] IncompleteCRLF get_line_content_crlf(Arena::Arena* arena, String8* buf, Line line) const;
+        char at(CharOffset offset) const;
         Line line_at(CharOffset offset) const;
         LineRange get_line_range(Line line) const;
         LineRange get_line_range_crlf(Line line) const;
@@ -264,35 +356,43 @@ namespace PieceTree
         {
             return Length{ rep(meta.lf_count) + 1 };
         }
+
+        Length length() const
+        {
+            return meta.total_content_length;
+        }
     private:
         friend class TreeWalker;
         friend class ReverseTreeWalker;
 
         RedBlackTree root;
         BufferMeta meta;
-        // A reference to the underlying tree buffers.
-        const BufferCollection* buffers;
+        // A reference to the underlying tree buffers.  This does not copy, only increments the ref.
+        BufferCollection buffers;
     };
 
-    struct TreeBuilder
+    enum class Direction { Left, Center, Right };
+
+    struct StackEntry
     {
-        Buffers buffers;
-        LineStarts scratch_starts;
+        StackEntry* next;
+        const RBNodeCounted* node;
+        Direction dir = Direction::Left;
+    };
 
-        void accept(std::string_view txt);
-
-        Tree create()
-        {
-            return Tree{ std::move(buffers) };
-        }
+    struct StackList
+    {
+        StackEntry* stack = nullptr;
+        StackEntry* free_list = nullptr;
     };
 
     class TreeWalker
     {
     public:
-        TreeWalker(const Tree* tree, CharOffset offset = CharOffset{ });
-        TreeWalker(const OwningSnapshot* snap, CharOffset offset = CharOffset{ });
-        TreeWalker(const ReferenceSnapshot* snap, CharOffset offset = CharOffset{ });
+        TreeWalker(Arena::Arena* arena, const Tree* tree, CharOffset offset = CharOffset{ });
+        TreeWalker(Arena::Arena* arena, const OwningSnapshot* snap, CharOffset offset = CharOffset{ });
+        TreeWalker(Arena::Arena* arena, const ReferenceSnapshot* snap, CharOffset offset = CharOffset{ });
+        TreeWalker(Arena::Arena* arena, const BufferCollection* buffers, const BufferMeta& meta, const RedBlackTree& root, CharOffset offset = CharOffset{ });
         TreeWalker(const TreeWalker&) = delete;
 
         char current();
@@ -304,33 +404,15 @@ namespace PieceTree
         {
             return total_offset;
         }
-
-        // For Iterator-like behavior.
-        TreeWalker& operator++()
-        {
-            return *this;
-        }
-
-        char operator*()
-        {
-            return next();
-        }
     private:
         void populate_ptrs();
         void fast_forward_to(CharOffset offset);
 
-        enum class Direction { Left, Center, Right };
-
-        struct StackEntry
-        {
-            PieceTree::RedBlackTree node;
-            Direction dir = Direction::Left;
-        };
-
         const BufferCollection* buffers;
         RedBlackTree root;
         BufferMeta meta;
-        std::vector<StackEntry> stack;
+        Arena::Arena* arena;
+        StackList stack = {};
         CharOffset total_offset = CharOffset{ 0 };
         const char* first_ptr = nullptr;
         const char* last_ptr = nullptr;
@@ -339,9 +421,9 @@ namespace PieceTree
     class ReverseTreeWalker
     {
     public:
-        ReverseTreeWalker(const Tree* tree, CharOffset offset = CharOffset{ });
-        ReverseTreeWalker(const OwningSnapshot* snap, CharOffset offset = CharOffset{ });
-        ReverseTreeWalker(const ReferenceSnapshot* snap, CharOffset offset = CharOffset{ });
+        ReverseTreeWalker(Arena::Arena* arena, const Tree* tree, CharOffset offset = CharOffset{ });
+        ReverseTreeWalker(Arena::Arena* arena, const OwningSnapshot* snap, CharOffset offset = CharOffset{ });
+        ReverseTreeWalker(Arena::Arena* arena, const ReferenceSnapshot* snap, CharOffset offset = CharOffset{ });
         ReverseTreeWalker(const TreeWalker&) = delete;
 
         char current();
@@ -353,62 +435,48 @@ namespace PieceTree
         {
             return total_offset;
         }
-
-        // For Iterator-like behavior.
-        ReverseTreeWalker& operator++()
-        {
-            return *this;
-        }
-
-        char operator*()
-        {
-            return next();
-        }
     private:
         void populate_ptrs();
         void fast_forward_to(CharOffset offset);
 
-        enum class Direction { Left, Center, Right };
-
-        struct StackEntry
-        {
-            PieceTree::RedBlackTree node;
-            Direction dir = Direction::Right;
-        };
-
         const BufferCollection* buffers;
         RedBlackTree root;
         BufferMeta meta;
-        std::vector<StackEntry> stack;
+        Arena::Arena* arena;
+        StackList stack = {};
         CharOffset total_offset = CharOffset{ 0 };
         const char* first_ptr = nullptr;
         const char* last_ptr = nullptr;
     };
 
-    struct WalkSentinel { };
-
-    inline TreeWalker begin(const Tree& tree)
-    {
-        return TreeWalker{ &tree };
-    }
-
-    constexpr WalkSentinel end(const Tree&)
-    {
-        return WalkSentinel{ };
-    }
-
-    inline bool operator==(const TreeWalker& walker, WalkSentinel)
-    {
-        return walker.exhausted();
-    }
-
     enum class EmptySelection : bool { No, Yes };
 
-    struct SelectionMeta
+    struct Selection
     {
-        OwningSnapshot snap;
         Offset first;
         Offset last;
         EmptySelection empty;
+    };
+
+    struct SelectionNode
+    {
+        SelectionNode* next;
+        Selection selection;
+    };
+
+    struct SelectionList
+    {
+        SelectionNode* first;
+        SelectionNode* last;
+        uint64_t count;
+    };
+
+    SelectionNode* push_selection(Arena::Arena* arena, SelectionList* lst, Selection sel);
+    void pop_selection(SelectionList* lst);
+
+    struct SelectionMeta
+    {
+        OwningSnapshot* snap;
+        SelectionList selections;
     };
 } // namespace PieceTree

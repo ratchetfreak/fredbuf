@@ -1,7 +1,6 @@
 #pragma once
 
-#include <memory>
-
+#include "macros.h"
 #include "types.h"
 
 // The concept for the RB tree is borrowed from
@@ -84,27 +83,52 @@ namespace PieceTree
         return "unknown";
     }
 
+    struct RBNodeCounted;
+    struct RBTreeBlock;
+
+    struct RBNodeBlock
+    {
+        RBTreeBlock* base_blk;
+        uint64_t ref_count;
+    };
+
+    struct RBNodeCounted
+    {
+        const RBNodeCounted* left;
+        NodeData data;
+        const RBNodeCounted* right;
+        Color color;
+        RBNodeBlock* blk;
+        RBNodeCounted* next;
+    };
+
+    inline read_only RBNodeCounted null_node_inst = {
+        .left = &null_node_inst,
+        .data = NodeData{},
+        .right = &null_node_inst,
+        .color = Color::Black,
+        .blk = nullptr,
+        .next = &null_node_inst,
+    };
+
+    // Counted node management.
+    void dec_node_ref(const RBNodeCounted* node);
+    const RBNodeCounted* take_node_ref(const RBNodeCounted* node);
+    const RBNodeCounted* make_node(RBTreeBlock* blk, Color c, const RBNodeCounted* lft, const NodeData& data, const RBNodeCounted* rgt);
+
     class RedBlackTree
     {
-        struct Node;
-        using NodePtr = std::shared_ptr<const Node>;
-
-        struct Node
-        {
-            Node(Color c, const NodePtr& lft, const NodeData& data, const NodePtr& rgt);
-
-            Color color;
-            NodePtr left;
-            NodeData data;
-            NodePtr right;
-        };
     public:
         struct ColorTree;
 
         explicit RedBlackTree() = default;
+        RedBlackTree(RedBlackTree&&);
+        RedBlackTree& operator=(const RedBlackTree&) = delete;
+        RedBlackTree& operator=(RedBlackTree&&);
+        ~RedBlackTree();
 
         // Queries.
-        const Node* root_ptr() const;
+        const RBNodeCounted* root_ptr() const;
         bool is_empty() const;
         const NodeData& root() const;
         RedBlackTree left() const;
@@ -115,15 +139,19 @@ namespace PieceTree
         bool operator==(const RedBlackTree&) const = default;
 
         // Mutators.
-        RedBlackTree insert(const NodeData& x, Offset at) const;
-        RedBlackTree remove(Offset at) const;
+        RedBlackTree insert(RBTreeBlock* blk, const NodeData& x, Offset at) const;
+        RedBlackTree remove(RBTreeBlock* blk, Offset at) const;
+
+        // Duplication.
+        RedBlackTree dup() const;
     private:
-        RedBlackTree(Color c,
+        RedBlackTree(RBTreeBlock* blk,
+                    Color c,
                     const RedBlackTree& lft,
                     const NodeData& val,
                     const RedBlackTree& rgt);
 
-        RedBlackTree(const NodePtr& node);
+        RedBlackTree(const RBNodeCounted* node);
 
         // Removal.
 #ifdef EXPERIMENTAL_REMOVE
@@ -131,25 +159,25 @@ namespace PieceTree
         ColorTree remove_node() const;
         static ColorTree remove_double_black(Color c, ColorTree const &lft, const NodeData& x, ColorTree const &rgt);
 #else
-        static RedBlackTree fuse(const RedBlackTree& left, const RedBlackTree& right);
-        static RedBlackTree balance(const RedBlackTree& node);
-        static RedBlackTree balance_left(const RedBlackTree& left);
-        static RedBlackTree balance_right(const RedBlackTree& right);
-        static RedBlackTree remove_left(const RedBlackTree& root, Offset at, Offset total);
-        static RedBlackTree remove_right(const RedBlackTree& root, Offset at, Offset total);
-        static RedBlackTree rem(const RedBlackTree& root, Offset at, Offset total);
+        static RedBlackTree fuse(RBTreeBlock* blk, const RedBlackTree& left, const RedBlackTree& right);
+        static RedBlackTree balance(RBTreeBlock* blk, const RedBlackTree& node);
+        static RedBlackTree balance_left(RBTreeBlock* blk, const RedBlackTree& left);
+        static RedBlackTree balance_right(RBTreeBlock* blk, const RedBlackTree& right);
+        static RedBlackTree remove_left(RBTreeBlock* blk, const RedBlackTree& root, Offset at, Offset total);
+        static RedBlackTree remove_right(RBTreeBlock* blk, const RedBlackTree& root, Offset at, Offset total);
+        static RedBlackTree rem(RBTreeBlock* blk, const RedBlackTree& root, Offset at, Offset total);
 #endif // EXPERIMENTAL_REMOVE
 
         // Insertion.
-        RedBlackTree ins(const NodeData& x, Offset at, Offset total_offset) const;
-        static RedBlackTree balance(Color c, const RedBlackTree& lft, const NodeData& x, const RedBlackTree& rgt);
+        RedBlackTree ins(RBTreeBlock* blk, const NodeData& x, Offset at, Offset total_offset) const;
+        static RedBlackTree balance(RBTreeBlock* blk, Color c, const RedBlackTree& lft, const NodeData& x, const RedBlackTree& rgt);
         bool doubled_left() const;
         bool doubled_right() const;
 
         // General.
-        RedBlackTree paint(Color c) const;
+        RedBlackTree paint(RBTreeBlock* blk, Color c) const;
 
-        NodePtr root_node;
+        const RBNodeCounted* root_node = &null_node_inst;
     };
 
     // Global queries.
