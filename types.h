@@ -1,5 +1,7 @@
 #pragma once
 
+#include <stdint.h>
+
 #include "enum-utils.h"
 
 namespace Editor

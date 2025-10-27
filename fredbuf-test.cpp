@@ -1,8 +1,5 @@
 #include <cassert>
 
-#include <format>
-#include <source_location>
-
 #include "arena.h"
 #include "fred-strings.h"
 #include "fredbuf.h"
@@ -10,93 +7,116 @@
 // Debug helper from fredbuf.cpp.
 void print_buffer(const PieceTree::Tree* tree);
 
-void assume_buffer_snapshots(const PieceTree::Tree* tree, std::string_view expected, PieceTree::CharOffset offset, std::source_location locus)
+void assume_buffer_snapshots(const PieceTree::Tree* tree, String8 expected, PieceTree::CharOffset offset, int locus)
 {
     // Owning snapshot.
     {
         auto scratch = Arena::scratch_begin(Arena::no_conflicts);
         auto* owning_snap = tree->owning_snap(scratch.arena);
         PieceTree::TreeWalker walker{ scratch.arena, owning_snap, offset };
-        std::string buf;
+        String8List serial_lst{};
+        str8_serial_begin(scratch.arena, &serial_lst);
         while (not walker.exhausted())
         {
-            buf.push_back(walker.next());
+            str8_serial_push_char(scratch.arena, &serial_lst, walker.next());
         }
         assert(walker.remaining() == PieceTree::Length{ 0 });
 
-        if (expected != buf)
+        String8 buf = str8_serial_end(scratch.arena, serial_lst);
+
+        if (not str8_match_exact(expected, buf))
         {
-            auto s = std::format("owning snapshot buffer string '{}' did not match expected value of '{}'. Line({})", buf, expected, locus.line());
-            fprintf(stderr, "%s\n", s.c_str());
+            fprintf(stderr, "owning snapshot buffer string '%*s' did not match expected value of '%*s'. Line(%d)\n", int(buf.size), buf.str, int(expected.size), expected.str, locus);
             assert(false);
         }
+        release_owning_snap(owning_snap);
         Arena::scratch_end(scratch);
     }
     // Reference snapshot.
     {
         auto scratch = Arena::scratch_begin(Arena::no_conflicts);
-        auto owning_snap = tree->ref_snap();
-        PieceTree::TreeWalker walker{ scratch.arena, &owning_snap, offset };
-        std::string buf;
+        auto ref_snap = tree->ref_snap();
+        PieceTree::TreeWalker walker{ scratch.arena, &ref_snap, offset };
+        String8List serial_lst{};
+        str8_serial_begin(scratch.arena, &serial_lst);
         while (not walker.exhausted())
         {
-            buf.push_back(walker.next());
+            str8_serial_push_char(scratch.arena, &serial_lst, walker.next());
         }
         assert(walker.remaining() == PieceTree::Length{ 0 });
 
-        if (expected != buf)
+        String8 buf = str8_serial_end(scratch.arena, serial_lst);
+
+        if (not str8_match_exact(expected, buf))
         {
-            auto s = std::format("reference snapshot buffer string '{}' did not match expected value of '{}'. Line({})", buf, expected, locus.line());
-            fprintf(stderr, "%s\n", s.c_str());
+            fprintf(stderr, "reference snapshot buffer string '%*s' did not match expected value of '%*s'. Line(%d)\n", int(buf.size), buf.str, int(expected.size), expected.str, locus);
             assert(false);
         }
         Arena::scratch_end(scratch);
     }
 }
 
-void assume_reverse_buffer(const PieceTree::Tree* tree, std::string_view forward_buf, PieceTree::CharOffset offset, std::source_location locus)
+void assume_reverse_buffer(const PieceTree::Tree* tree, String8 forward_buf, PieceTree::CharOffset offset, int locus)
 {
     auto scratch = Arena::scratch_begin(Arena::no_conflicts);
     PieceTree::ReverseTreeWalker walker{ scratch.arena, tree, offset };
-    std::string buf;
+    String8List serial_lst{};
+    str8_serial_begin(scratch.arena, &serial_lst);
     while (not walker.exhausted())
     {
-        buf.push_back(walker.next());
+        str8_serial_push_char(scratch.arena, &serial_lst, walker.next());
     }
     assert(walker.remaining() == PieceTree::Length{ 0 });
 
+    String8 buf = str8_serial_end(scratch.arena, serial_lst);
+
+    if (buf.size != forward_buf.size)
+    {
+        fprintf(stderr, "reference snapshot buffer string '%.*s' did not match expected value of '%.*s'. Line(%d)\n", int(buf.size), buf.str, int(forward_buf.size), forward_buf.str, locus);
+        assert(false);
+    }
+
     // Walk 'forward_buf' in reverse and compare.
-    auto rfirst = rbegin(forward_buf);
-    auto rlast = rend(forward_buf);
-    const bool result = std::equal(rfirst, rlast, begin(buf), end(buf));
+    bool result = true;
+    uint64_t forward_off = forward_buf.size - 1;
+    for EachIndex(i, buf.size)
+    {
+        if (buf.str[i] != forward_buf.str[forward_off - i])
+        {
+            result = false;
+            break;
+        }
+    }
+
     if (not result)
     {
-        auto s = std::format("Reversed buffer '{}' is not equal to forward buffer '{}'.  Line({})", buf, forward_buf, locus.line());
-        fprintf(stderr, "%s\n", s.c_str());
+        fprintf(stderr, "reference snapshot buffer string '%.*s' did not match expected value of '%.*s'. Line(%d)\n", int(buf.size), buf.str, int(forward_buf.size), forward_buf.str, locus);
         assert(false);
     }
     Arena::scratch_end(scratch);
 }
 
-void assume_buffer(const PieceTree::Tree* tree, std::string_view expected, std::source_location locus = std::source_location::current())
+void assume_buffer(const PieceTree::Tree* tree, String8View expected, int locus = __builtin_LINE())
 {
     auto scratch = Arena::scratch_begin(Arena::no_conflicts);
     constexpr auto start = PieceTree::CharOffset{ 0 };
     PieceTree::TreeWalker walker{ scratch.arena, tree, start };
-    std::string buf;
+    String8List serial_lst{};
+    str8_serial_begin(scratch.arena, &serial_lst);
     while (not walker.exhausted())
     {
-        buf.push_back(walker.next());
+        str8_serial_push_char(scratch.arena, &serial_lst, walker.next());
     }
     assert(walker.remaining() == PieceTree::Length{ 0 });
 
-    if (expected != buf)
+    String8 buf = str8_serial_end(scratch.arena, serial_lst);
+
+    if (not str8_match_exact(str8_mut(expected), buf))
     {
-        auto s = std::format("buffer string '{}' did not match expected value of '{}'. Line({})", buf, expected, locus.line());
-        fprintf(stderr, "%s\n", s.c_str());
+        fprintf(stderr, "buffer string '%*s' did not match expected value of '%*s'. Line(%d)\n", int(buf.size), buf.str, int(expected.size), expected.str, locus);
         assert(false);
     }
-    assume_buffer_snapshots(tree, expected, start, locus);
+    assume_buffer_snapshots(tree, str8_mut(expected), start, locus);
     assume_reverse_buffer(tree, buf, start + retract(tree->length()), locus);
     Arena::scratch_end(scratch);
 }
@@ -106,16 +126,15 @@ void test1()
 {
     auto scratch = Arena::scratch_begin(Arena::no_conflicts);
     TreeBuilder builder = tree_builder_start(scratch.arena);
-    std::string buf;
     tree_builder_accept(scratch.arena, &builder, str8_mut(str8_literal("A\nB\nC\nD")));
     Tree* tree = tree_builder_finish(&builder);
-    assume_buffer(tree, "A\nB\nC\nD");
+    assume_buffer(tree, str8_literal("A\nB\nC\nD"));
 
     tree->remove(CharOffset{ 4 }, Length{ 1 });
     tree->remove(CharOffset{ 3 }, Length{ 1 });
 
     print_buffer(tree);
-    assume_buffer(tree, "A\nB\nD");
+    assume_buffer(tree, str8_literal("A\nB\nD"));
 
     release_tree(tree);
     Arena::scratch_end(scratch);
@@ -194,7 +213,7 @@ void test2()
     tree->remove(CharOffset{ 5 }, Length{ 1 });
 
     print_buffer(tree);
-    assume_buffer(tree, "sdaaadff\n\ndsfasdf\n\naasdf\n");
+    assume_buffer(tree, str8_literal("sdaaadff\n\ndsfasdf\n\naasdf\n"));
 
     release_tree(tree);
     Arena::scratch_end(scratch);
@@ -352,11 +371,11 @@ void test4()
 
     tree->insert(CharOffset{4}, str8_mut(str8_literal("a")));
 
-    assume_buffer(tree, "ABCDa");
+    assume_buffer(tree, str8_literal("ABCDa"));
 
     tree->remove(CharOffset{3}, Length{2});
 
-    assume_buffer(tree, "ABC");
+    assume_buffer(tree, str8_literal("ABC"));
 
     release_tree(tree);
     Arena::scratch_end(scratch);
@@ -371,11 +390,11 @@ void test5()
 
     tree->insert(CharOffset{ 0 }, str8_mut(str8_literal("a")));
 
-    assume_buffer(tree, "a");
+    assume_buffer(tree, str8_literal("a"));
 
     tree->remove(CharOffset{ 0 }, Length{ 1 });
 
-    assume_buffer(tree, "");
+    assume_buffer(tree, str8_literal(""));
 
     release_tree(tree);
     Arena::scratch_end(scratch);
@@ -392,31 +411,31 @@ void test6()
     tree->insert(CharOffset{ 1 }, str8_mut(str8_literal("b")));
     tree->insert(CharOffset{ 2 }, str8_mut(str8_literal("c")));
 
-    assume_buffer(tree, "abcHello, World!");
+    assume_buffer(tree, str8_literal("abcHello, World!"));
 
     tree->remove(CharOffset{ 0 }, Length{ 3 });
 
-    assume_buffer(tree, "Hello, World!");
+    assume_buffer(tree, str8_literal("Hello, World!"));
 
     auto r = tree->try_undo(CharOffset{ 0 });
     assert(r.success);
 
-    assume_buffer(tree, "abcHello, World!");
+    assume_buffer(tree, str8_literal("abcHello, World!"));
 
     r = tree->try_redo(CharOffset{ 0 });
     assert(r.success);
 
-    assume_buffer(tree, "Hello, World!");
+    assume_buffer(tree, str8_literal("Hello, World!"));
 
     r = tree->try_undo(CharOffset{ 0 });
     assert(r.success);
 
-    assume_buffer(tree, "abcHello, World!");
+    assume_buffer(tree, str8_literal("abcHello, World!"));
 
     r = tree->try_undo(CharOffset{ 0 });
     assert(r.success);
 
-    assume_buffer(tree, "Hello, World!");
+    assume_buffer(tree, str8_literal("Hello, World!"));
 
     r = tree->try_undo(CharOffset{ 0 });
     assert(not r.success);
@@ -424,18 +443,18 @@ void test6()
     r = tree->try_redo(CharOffset{ 0 });
     assert(r.success);
 
-    assume_buffer(tree, "abcHello, World!");
+    assume_buffer(tree, str8_literal("abcHello, World!"));
 
     r = tree->try_undo(CharOffset{ 0 });
     assert(r.success);
 
-    assume_buffer(tree, "Hello, World!");
+    assume_buffer(tree, str8_literal("Hello, World!"));
 
     // Destroy the redo stack.
 
     tree->insert(CharOffset{ 0 }, str8_mut(str8_literal("NEW")));
 
-    assume_buffer(tree, "NEWHello, World!");
+    assume_buffer(tree, str8_literal("NEWHello, World!"));
 
     r = tree->try_redo(CharOffset{ 0 });
     assert(not r.success);
@@ -443,7 +462,7 @@ void test6()
     r = tree->try_undo(CharOffset{ 0 });
     assert(r.success);
 
-    assume_buffer(tree, "Hello, World!");
+    assume_buffer(tree, str8_literal("Hello, World!"));
 
     release_tree(tree);
     Arena::scratch_end(scratch);
@@ -459,11 +478,11 @@ void test7()
 
     tree->insert(CharOffset{ 0 }, str8_mut(str8_literal("foo")));
 
-    assume_buffer(tree, "fooABCDEF");
+    assume_buffer(tree, str8_literal("fooABCDEF"));
 
     tree->remove(CharOffset{ 6 }, Length{ 3 });
 
-    assume_buffer(tree, "fooABC");
+    assume_buffer(tree, str8_literal("fooABC"));
 
     String8 buf = tree->get_line_content(scratch.arena, Line{ 1 });
 
@@ -487,13 +506,13 @@ void test8()
     Tree* tree = tree_builder_finish(&builder);
 
     tree->insert(CharOffset{ 0 }, str8_mut(str8_literal("a")), PieceTree::SuppressHistory::Yes);
-    assume_buffer(tree, "aHello, World!");
+    assume_buffer(tree, str8_literal("aHello, World!"));
 
     auto r = tree->try_undo(CharOffset{ 0 });
     assert(not r.success);
 
     tree->remove(CharOffset{ 0 }, Length{ 1 }, PieceTree::SuppressHistory::Yes);
-    assume_buffer(tree, "Hello, World!");
+    assume_buffer(tree, str8_literal("Hello, World!"));
 
     r = tree->try_undo(CharOffset{ 0 });
     assert(not r.success);
@@ -503,26 +522,26 @@ void test8()
     tree->insert(CharOffset{ 0 }, str8_mut(str8_literal("a")), PieceTree::SuppressHistory::Yes);
     tree->insert(CharOffset{ 1 }, str8_mut(str8_literal("b")), PieceTree::SuppressHistory::Yes);
     tree->insert(CharOffset{ 2 }, str8_mut(str8_literal("c")), PieceTree::SuppressHistory::Yes);
-    assume_buffer(tree, "abcHello, World!");
+    assume_buffer(tree, str8_literal("abcHello, World!"));
 
     r = tree->try_undo(CharOffset{ 0 });
     assert(r.success);
-    assume_buffer(tree, "Hello, World!");
+    assume_buffer(tree, str8_literal("Hello, World!"));
 
     // Snap back to "Hello, World!"
     tree->commit_head(CharOffset{ 0 });
     tree->remove(CharOffset{ 0 }, Length{ 7 }, PieceTree::SuppressHistory::Yes);
-    assume_buffer(tree, "World!");
+    assume_buffer(tree, str8_literal("World!"));
 
     tree->remove(CharOffset{ 5 }, Length{ 1 }, PieceTree::SuppressHistory::Yes);
-    assume_buffer(tree, "World");
+    assume_buffer(tree, str8_literal("World"));
 
     r = tree->try_undo(CharOffset{ 0 });
     assert(r.success);
-    assume_buffer(tree, "Hello, World!");
+    assume_buffer(tree, str8_literal("Hello, World!"));
 
     r = tree->try_redo(CharOffset{ 0 });
-    assume_buffer(tree, "World");
+    assume_buffer(tree, str8_literal("World"));
 
     release_tree(tree);
     Arena::scratch_end(scratch);
@@ -538,40 +557,40 @@ void test9()
     auto initial_commit = tree->head();
 
     tree->insert(CharOffset{ 0 }, str8_mut(str8_literal("a")), PieceTree::SuppressHistory::Yes);
-    assume_buffer(tree, "aHello, World!");
+    assume_buffer(tree, str8_literal("aHello, World!"));
 
     auto r = tree->try_undo(CharOffset{ 0 });
     assert(not r.success);
 
     auto commit = tree->head();
     tree->snap_to(initial_commit);
-    assume_buffer(tree, "Hello, World!");
+    assume_buffer(tree, str8_literal("Hello, World!"));
 
     tree->snap_to(commit);
-    assume_buffer(tree, "aHello, World!");
+    assume_buffer(tree, str8_literal("aHello, World!"));
 
     tree->remove(CharOffset{ 0 }, Length{ 8 }, PieceTree::SuppressHistory::Yes);
-    assume_buffer(tree, "World!");
+    assume_buffer(tree, str8_literal("World!"));
 
     tree->snap_to(commit);
-    assume_buffer(tree, "aHello, World!");
+    assume_buffer(tree, str8_literal("aHello, World!"));
 
     tree->snap_to(initial_commit);
-    assume_buffer(tree, "Hello, World!");
+    assume_buffer(tree, str8_literal("Hello, World!"));
 
     // Create a new branch.
     tree->insert(CharOffset{ 13 }, str8_mut(str8_literal(" My name is fredbuf.")), PieceTree::SuppressHistory::Yes);
-    assume_buffer(tree, "Hello, World! My name is fredbuf.");
+    assume_buffer(tree, str8_literal("Hello, World! My name is fredbuf."));
 
     auto branch = tree->head();
 
     // Revert back.
     tree->snap_to(commit);
-    assume_buffer(tree, "aHello, World!");
+    assume_buffer(tree, str8_literal("aHello, World!"));
 
     // Revert back to branch.
     tree->snap_to(branch);
-    assume_buffer(tree, "Hello, World! My name is fredbuf.");
+    assume_buffer(tree, str8_literal("Hello, World! My name is fredbuf."));
 
     release_tree(tree);
     Arena::scratch_end(scratch);
@@ -770,11 +789,12 @@ passages, and more recently with desktop publishing software like Aldus PageMake
 int main()
 {
     // Setup the scratch arenas.
-    Arena::Arena* scratch_arenas[2];
+    constexpr int arena_size = 2;
+    Arena::Arena* scratch_arenas[arena_size];
     // Generally, you only need two arenas to handle all conflicts.
     scratch_arenas[0] = Arena::alloc(Arena::default_params);
     scratch_arenas[1] = Arena::alloc(Arena::default_params);
-    Arena::populate_scratch_arenas({ scratch_arenas, std::size(scratch_arenas) });
+    Arena::populate_scratch_arenas({ scratch_arenas, arena_size });
 
     test1();
     test2();
