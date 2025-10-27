@@ -233,7 +233,6 @@ void test3()
     tree_builder_accept(arena, &builder, str8_mut(str8_literal("!")));
     tree_builder_accept(arena, &builder, str8_mut(str8_literal("\nThis is a second line.")));
     tree_builder_accept(arena, &builder, str8_mut(str8_literal(" Continue...\nANOTHER!")));
-
     Tree* tree = tree_builder_finish(&builder);
 
     print_tree(*tree);
