@@ -1808,9 +1808,7 @@ namespace PieceTree
                 uint8_t* blob = Arena::push_array_no_zero<uint8_t>(arena, sizeof(UndoRedoEntry));
                 entry = new (blob) UndoRedoEntry{ .root = RedBlackTree{} };
             }
-            SUPPRESS_MEMSET_NON_TRIVIAL_WARNING();
             zero_bytes(entry);
-            ENABLE_MEMSET_NON_TRIVIAL_WARNING();
             entry->root = root.dup();
             entry->op_offset = op_offset;
             SLLQueuePushFront(lst->first, lst->last, entry);
