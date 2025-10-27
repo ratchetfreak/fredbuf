@@ -1,3 +1,5 @@
+#include <stdio.h>
+
 #include <cassert>
 
 #include "arena.h"
@@ -189,10 +191,10 @@ void test2()
 #endif
     auto line = Line{ 1 };
     auto range = tree->get_line_range(line);
-    printf("Line{%zu} range: first{%zu} last{%zu}\n", line, range.first, range.last);
+    printf("Line{%zu} range: first{%zu} last{%zu}\n", rep(line), rep(range.first), rep(range.last));
     String8 buf = tree->get_line_content(scratch.arena, line);
     printf("content: %s\n", buf.str);
-    printf("Line number: %zu\n", tree->line_at(range.first));
+    printf("Line number: %zu\n", rep(tree->line_at(range.first)));
 
     print_buffer(tree);
 
@@ -263,7 +265,7 @@ void test3()
 
     auto off = CharOffset{ 13 };
     auto len = Length{ 5 };
-    printf("--- Delete at off{%zu}, len{%zu} ---\n", off, len);
+    printf("--- Delete at off{%zu}, len{%zu} ---\n", rep(off), rep(len));
     tree->remove(off, len);
 
 #if 0
@@ -280,7 +282,7 @@ void test3()
 
     off = CharOffset{ 37 };
     len = Length{ 5 };
-    printf("--- Delete at off{%zu}, len{%zu} ---\n", off, len);
+    printf("--- Delete at off{%zu}, len{%zu} ---\n", rep(off), rep(len));
     tree->remove(off, len);
 
 #if 0
@@ -324,18 +326,18 @@ void test3()
     for (Line line = Line{ 1 }; line <= total_lines;line = extend(line))
     {
         auto range = tree->get_line_range(line);
-        printf("Line{%zu} range: first{%zu} last{%zu}\n", line, range.first, range.last);
+        printf("Line{%zu} range: first{%zu} last{%zu}\n", rep(line), rep(range.first), rep(range.last));
         buf = tree->get_line_content(scratch.arena, line);
         printf("content: %s\n", buf.str);
-        printf("Line number: %zu\n", tree->line_at(range.first));
+        printf("Line number: %zu\n", rep(tree->line_at(range.first)));
     }
 
     printf("out of range line:\n");
     auto range = tree->get_line_range(Line{ 99 });
-    printf("Line{%zu} range: first{%zu} last{%zu}\n", size_t{99}, range.first, range.last);
+    printf("Line{%zu} range: first{%zu} last{%zu}\n", size_t{99}, rep(range.first), rep(range.last));
     buf = tree->get_line_content(scratch.arena, Line{ 99 });
     printf("content: %s\n", buf.str);
-    printf("Line number: %zu\n", tree->line_at(range.first));
+    printf("Line number: %zu\n", rep(tree->line_at(range.first)));
 #if 0
     tree->remove(PieceTree::CharOffset{ 37 }, PieceTree::Length{ 5 });
 
