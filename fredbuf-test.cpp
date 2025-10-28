@@ -636,32 +636,34 @@ struct Stopwatch
     Clock::time_point stop_ = { };
 };
 
-#define EachIndex(i,n) (uint64_t i=0;i<n;++i)
-
 void time_buffer()
 {
     Stopwatch sw;
-    constexpr std::string_view initial_input =
+    constexpr String8View initial_input = str8_literal(
 R"(What is Lorem Ipsum?
 Lorem Ipsum is simply dummy text of the printing and typesetting industry. Lorem Ipsum has been the industry's standard dummy text ever since the 1500s,
 when an unknown printer took a galley of type and scrambled it to make a type specimen book. It has survived not only five centuries, but also the leap
 into electronic typesetting, remaining essentially unchanged. It was popularised in the 1960s with the release of Letraset sheets containing Lorem Ipsum
-passages, and more recently with desktop publishing software like Aldus PageMaker including versions of Lorem Ipsum.)";
-    constexpr std::string_view inserted_buf_expected =
+passages, and more recently with desktop publishing software like Aldus PageMaker including versions of Lorem Ipsum.)"
+    );
+    constexpr String8View inserted_buf_expected = str8_literal(
 R"(What is Lorem Ipsum?
 Lorem Ipsum is simply dummy text of the printing and typesetting industry. Lorem Ipsum has been the industry's standard dummy text ever since the 1500s,
 when an unknown printer took a galley of type and scrambled it to make a type specimen book. It has survived not only five aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaacenturies, but also the leap
 into electronic typesetting, remaining essentially unchanged. It was popularised in the 1960s with the release of Letraset sheets containing Lorem Ipsum
-passages, and more recently with desktop publishing software like Aldus PageMaker including versions of Lorem Ipsum.)";
-    constexpr std::string_view upper_half =
+passages, and more recently with desktop publishing software like Aldus PageMaker including versions of Lorem Ipsum.)"
+    );
+    constexpr String8View upper_half = str8_literal(
 R"(enturies, but also the leap
 into electronic typesetting, remaining essentially unchanged. It was popularised in the 1960s with the release of Letraset sheets containing Lorem Ipsum
-passages, and more recently with desktop publishing software like Aldus PageMaker including versions of Lorem Ipsum.)";
-    TreeBuilder builder;
-    builder.accept(initial_input);
-    Tree tree = builder.create();
+passages, and more recently with desktop publishing software like Aldus PageMaker including versions of Lorem Ipsum.)"
+    );
+    auto scratch = Arena::scratch_begin(Arena::no_conflicts);
+    TreeBuilder builder = tree_builder_start(scratch.arena);
+    tree_builder_accept(scratch.arena, &builder, str8_mut(initial_input));
+    Tree* tree = tree_builder_finish(&builder);
 
-    auto initial_commit = tree.head();
+    auto initial_commit = tree->head();
 
     constexpr int timing_count = 10;
     std::chrono::microseconds timing_data[timing_count];
@@ -669,25 +671,25 @@ passages, and more recently with desktop publishing software like Aldus PageMake
     {
         for EachIndex(i, timing_count)
         {
-            tree.snap_to(initial_commit);
-            auto mid = extend(CharOffset{}, (rep(tree.length()) / 2));
-            std::string_view ins_txt = "a";
+            tree->snap_to(initial_commit);
+            auto mid = extend(CharOffset{}, (rep(tree->length()) / 2));
+            String8 ins_txt = str8_mut(str8_literal("a"));
             sw.start();
             for (int j = 0; j < 100; ++j)
             {
-                tree.insert(mid, ins_txt, SuppressHistory::Yes);
+                tree->insert(mid, ins_txt, SuppressHistory::Yes);
                 mid = extend(mid);
             }
             sw.stop();
             timing_data[i] = sw.to_us();
-            assume_buffer(&tree, inserted_buf_expected);
+            assume_buffer(tree, inserted_buf_expected);
         }
         // Aggregate and display.
         printf("---------- Append-like insertions ----------\n");
         int64_t total_count = 0;
         for EachIndex(i, timing_count)
         {
-            printf("[%u] = %ldus\n", unsigned(i), long(timing_data[i].count()));
+            printf("[%llu] = %lldus\n", i, timing_data[i].count());
             total_count += timing_data[i].count();
         }
         // Find mean.
@@ -699,25 +701,25 @@ passages, and more recently with desktop publishing software like Aldus PageMake
     {
         for EachIndex(i, timing_count)
         {
-            tree.snap_to(initial_commit);
-            auto mid = extend(CharOffset{}, (rep(tree.length()) / 2));
-            std::string_view ins_txt = "a";
+            tree->snap_to(initial_commit);
+            auto mid = extend(CharOffset{}, (rep(tree->length()) / 2));
+            String8 ins_txt = str8_mut(str8_literal("a"));
             sw.start();
             for (int j = 0; j < 100; ++j)
             {
                 // Don't change 'mid' to append to the string.
-                tree.insert(mid, ins_txt, SuppressHistory::Yes);
+                tree->insert(mid, ins_txt, SuppressHistory::Yes);
             }
             sw.stop();
             timing_data[i] = sw.to_us();
-            assume_buffer(&tree, inserted_buf_expected);
+            assume_buffer(tree, inserted_buf_expected);
         }
         // Aggregate and display.
         printf("---------- In-place insertions ----------\n");
         int64_t total_count = 0;
         for EachIndex(i, timing_count)
         {
-            printf("[%u] = %ldus\n", unsigned(i), long(timing_data[i].count()));
+            printf("[%llu] = %lldus\n", i, timing_data[i].count());
             total_count += timing_data[i].count();
         }
         // Find mean.
@@ -729,25 +731,25 @@ passages, and more recently with desktop publishing software like Aldus PageMake
     {
         for EachIndex(i, timing_count)
         {
-            tree.snap_to(initial_commit);
-            auto mid = extend(CharOffset{}, (rep(tree.length()) / 2));
+            tree->snap_to(initial_commit);
+            auto mid = extend(CharOffset{}, (rep(tree->length()) / 2));
             sw.start();
             while (mid != CharOffset::Sentinel)
             {
                 // Don't change 'mid' to append to the string.
-                tree.remove(mid, Length{ 1 }, SuppressHistory::Yes);
+                tree->remove(mid, Length{ 1 }, SuppressHistory::Yes);
                 mid = retract(mid);
             }
             sw.stop();
             timing_data[i] = sw.to_us();
-            assume_buffer(&tree, upper_half);
+            assume_buffer(tree, upper_half);
         }
         // Aggregate and display.
         printf("---------- Deletion starting at middle ----------\n");
         int64_t total_count = 0;
         for EachIndex(i, timing_count)
         {
-            printf("[%u] = %ldus\n", unsigned(i), long(timing_data[i].count()));
+            printf("[%llu] = %lldus\n", i, timing_data[i].count());
             total_count += timing_data[i].count();
         }
         // Find mean.
@@ -759,32 +761,35 @@ passages, and more recently with desktop publishing software like Aldus PageMake
     {
         for EachIndex(i, timing_count)
         {
-            tree.snap_to(initial_commit);
+            tree->snap_to(initial_commit);
             // This deletion needs to be inclusive of the midpoint (to be consistent with deletion above).
-            auto len_to_del = Length{ (rep(tree.length()) / 2) + 1 };
+            auto len_to_del = Length{ (rep(tree->length()) / 2) + 1 };
             sw.start();
             while (len_to_del != Length{})
             {
                 // Don't change 'mid' to append to the string.
-                tree.remove(CharOffset{}, Length{ 1 }, SuppressHistory::Yes);
+                tree->remove(CharOffset{}, Length{ 1 }, SuppressHistory::Yes);
                 len_to_del = retract(len_to_del);
             }
             sw.stop();
             timing_data[i] = sw.to_us();
-            assume_buffer(&tree, upper_half);
+            assume_buffer(tree, upper_half);
         }
         // Aggregate and display.
         printf("---------- Deletion starting at beginning ----------\n");
         int64_t total_count = 0;
         for EachIndex(i, timing_count)
         {
-            printf("[%u] = %ldus\n", unsigned(i), long(timing_data[i].count()));
+            printf("[%llu] = %lldus\n", i, timing_data[i].count());
             total_count += timing_data[i].count();
         }
         // Find mean.
         double mean = static_cast<double>(total_count) / timing_count;
         printf("Average: %.2fus\n", mean);
     }
+
+    release_tree(tree);
+    Arena::scratch_end(scratch);
 }
 #endif // TIMING_DATA
 
@@ -807,6 +812,10 @@ int main()
     test7();
     test8();
     test9();
+
+#ifdef TIMING_DATA
+    time_buffer();
+#endif // TIMING_DATA
 }
 
 #include "arena.cpp"

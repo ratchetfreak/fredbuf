@@ -114,8 +114,10 @@ namespace PieceTree
 
     RedBlackTree& RedBlackTree::operator=(RedBlackTree&& other)
     {
+        // Swap these, so the dtor for 'other' will handle decrementing the ref.
+        const RBNodeCounted* old_root = root_node;
         root_node = other.root_node;
-        other.root_node = nil_node();
+        other.root_node = old_root;
         return *this;
     }
 
@@ -1809,7 +1811,7 @@ namespace PieceTree
                 entry = new (blob) UndoRedoEntry{ .root = RedBlackTree{} };
             }
             zero_bytes(entry);
-            entry->root = root.dup();
+            new(&entry->root) RedBlackTree{ root.dup() };
             entry->op_offset = op_offset;
             SLLQueuePushFront(lst->first, lst->last, entry);
             ++lst->count;
