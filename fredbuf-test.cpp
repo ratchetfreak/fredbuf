@@ -535,6 +535,196 @@ void test9()
     assume_buffer(&tree, "Hello, World! My name is fredbuf.");
 }
 
+#ifdef TIMING_DATA
+#include <chrono>
+
+struct Stopwatch
+{
+    using Clock = std::chrono::high_resolution_clock;
+
+    void start()
+    {
+        start_ = Clock::now();
+    }
+
+    void stop()
+    {
+        stop_  = Clock::now();
+    }
+
+    Clock::duration ticks() const
+    {
+        return stop_ - start_;
+    }
+
+    // helpers
+    template <typename Tick>
+    Tick to_ticks() const
+    {
+        return std::chrono::duration_cast<Tick>(ticks());
+    }
+
+    std::chrono::microseconds to_us() const
+    {
+        return to_ticks<std::chrono::microseconds>();
+    }
+
+    Clock::time_point start_ = { };
+    Clock::time_point stop_ = { };
+};
+
+#define EachIndex(i,n) (uint64_t i=0;i<n;++i)
+
+void time_buffer()
+{
+    Stopwatch sw;
+    constexpr std::string_view initial_input =
+R"(What is Lorem Ipsum?
+Lorem Ipsum is simply dummy text of the printing and typesetting industry. Lorem Ipsum has been the industry's standard dummy text ever since the 1500s,
+when an unknown printer took a galley of type and scrambled it to make a type specimen book. It has survived not only five centuries, but also the leap
+into electronic typesetting, remaining essentially unchanged. It was popularised in the 1960s with the release of Letraset sheets containing Lorem Ipsum
+passages, and more recently with desktop publishing software like Aldus PageMaker including versions of Lorem Ipsum.)";
+    constexpr std::string_view inserted_buf_expected =
+R"(What is Lorem Ipsum?
+Lorem Ipsum is simply dummy text of the printing and typesetting industry. Lorem Ipsum has been the industry's standard dummy text ever since the 1500s,
+when an unknown printer took a galley of type and scrambled it to make a type specimen book. It has survived not only five aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaacenturies, but also the leap
+into electronic typesetting, remaining essentially unchanged. It was popularised in the 1960s with the release of Letraset sheets containing Lorem Ipsum
+passages, and more recently with desktop publishing software like Aldus PageMaker including versions of Lorem Ipsum.)";
+    constexpr std::string_view upper_half =
+R"(enturies, but also the leap
+into electronic typesetting, remaining essentially unchanged. It was popularised in the 1960s with the release of Letraset sheets containing Lorem Ipsum
+passages, and more recently with desktop publishing software like Aldus PageMaker including versions of Lorem Ipsum.)";
+    TreeBuilder builder;
+    builder.accept(initial_input);
+    Tree tree = builder.create();
+
+    auto initial_commit = tree.head();
+
+    constexpr int timing_count = 10;
+    std::chrono::microseconds timing_data[timing_count];
+    // Append-like insertions in the middle.
+    {
+        for EachIndex(i, timing_count)
+        {
+            tree.snap_to(initial_commit);
+            auto mid = extend(CharOffset{}, (rep(tree.length()) / 2));
+            std::string_view ins_txt = "a";
+            sw.start();
+            for (int j = 0; j < 100; ++j)
+            {
+                tree.insert(mid, ins_txt, SuppressHistory::Yes);
+                mid = extend(mid);
+            }
+            sw.stop();
+            timing_data[i] = sw.to_us();
+            assume_buffer(&tree, inserted_buf_expected);
+        }
+        // Aggregate and display.
+        printf("---------- Append-like insertions ----------\n");
+        int64_t total_count = 0;
+        for EachIndex(i, timing_count)
+        {
+            printf("[%u] = %ldus\n", unsigned(i), long(timing_data[i].count()));
+            total_count += timing_data[i].count();
+        }
+        // Find mean.
+        double mean = static_cast<double>(total_count) / timing_count;
+        printf("Average: %.2fus\n", mean);
+    }
+
+    // In-place insertions in the middle.
+    {
+        for EachIndex(i, timing_count)
+        {
+            tree.snap_to(initial_commit);
+            auto mid = extend(CharOffset{}, (rep(tree.length()) / 2));
+            std::string_view ins_txt = "a";
+            sw.start();
+            for (int j = 0; j < 100; ++j)
+            {
+                // Don't change 'mid' to append to the string.
+                tree.insert(mid, ins_txt, SuppressHistory::Yes);
+            }
+            sw.stop();
+            timing_data[i] = sw.to_us();
+            assume_buffer(&tree, inserted_buf_expected);
+        }
+        // Aggregate and display.
+        printf("---------- In-place insertions ----------\n");
+        int64_t total_count = 0;
+        for EachIndex(i, timing_count)
+        {
+            printf("[%u] = %ldus\n", unsigned(i), long(timing_data[i].count()));
+            total_count += timing_data[i].count();
+        }
+        // Find mean.
+        double mean = static_cast<double>(total_count) / timing_count;
+        printf("Average: %.2fus\n", mean);
+    }
+
+    // Deleting characters to beginning starting at middle.
+    {
+        for EachIndex(i, timing_count)
+        {
+            tree.snap_to(initial_commit);
+            auto mid = extend(CharOffset{}, (rep(tree.length()) / 2));
+            sw.start();
+            while (mid != CharOffset::Sentinel)
+            {
+                // Don't change 'mid' to append to the string.
+                tree.remove(mid, Length{ 1 }, SuppressHistory::Yes);
+                mid = retract(mid);
+            }
+            sw.stop();
+            timing_data[i] = sw.to_us();
+            assume_buffer(&tree, upper_half);
+        }
+        // Aggregate and display.
+        printf("---------- Deletion starting at middle ----------\n");
+        int64_t total_count = 0;
+        for EachIndex(i, timing_count)
+        {
+            printf("[%u] = %ldus\n", unsigned(i), long(timing_data[i].count()));
+            total_count += timing_data[i].count();
+        }
+        // Find mean.
+        double mean = static_cast<double>(total_count) / timing_count;
+        printf("Average: %.2fus\n", mean);
+    }
+
+    // Deleting half the characters starting at beginning.
+    {
+        for EachIndex(i, timing_count)
+        {
+            tree.snap_to(initial_commit);
+            // This deletion needs to be inclusive of the midpoint (to be consistent with deletion above).
+            auto len_to_del = Length{ (rep(tree.length()) / 2) + 1 };
+            sw.start();
+            while (len_to_del != Length{})
+            {
+                // Don't change 'mid' to append to the string.
+                tree.remove(CharOffset{}, Length{ 1 }, SuppressHistory::Yes);
+                len_to_del = retract(len_to_del);
+            }
+            sw.stop();
+            timing_data[i] = sw.to_us();
+            assume_buffer(&tree, upper_half);
+        }
+        // Aggregate and display.
+        printf("---------- Deletion starting at beginning ----------\n");
+        int64_t total_count = 0;
+        for EachIndex(i, timing_count)
+        {
+            printf("[%u] = %ldus\n", unsigned(i), long(timing_data[i].count()));
+            total_count += timing_data[i].count();
+        }
+        // Find mean.
+        double mean = static_cast<double>(total_count) / timing_count;
+        printf("Average: %.2fus\n", mean);
+    }
+}
+#endif // TIMING_DATA
+
 int main()
 {
     test1();
@@ -546,4 +736,7 @@ int main()
     test7();
     test8();
     test9();
+#ifdef TIMING_DATA
+    time_buffer();
+#endif // TIMING_DATA
 }

@@ -53,3 +53,5 @@ Feel free to open up a PR or issue but there's no guarantee it will get merged.
 ## Building
 
 If you're on Windows, open a developer command prompt and invoke `b.bat`.  Do the same for essentially any other compiler except change the flags to be specific to your compiler.  It's all standard C++ all the way down.
+
+Optionally, you can have the build emit timing data by using `b timing`.
