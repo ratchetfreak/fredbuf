@@ -689,7 +689,7 @@ passages, and more recently with desktop publishing software like Aldus PageMake
         int64_t total_count = 0;
         for EachIndex(i, timing_count)
         {
-            printf("[%llu] = %lldus\n", i, timing_data[i].count());
+            printf("[%u] = %ldus\n", unsigned(i), long(timing_data[i].count()));
             total_count += timing_data[i].count();
         }
         // Find mean.
@@ -719,7 +719,7 @@ passages, and more recently with desktop publishing software like Aldus PageMake
         int64_t total_count = 0;
         for EachIndex(i, timing_count)
         {
-            printf("[%llu] = %lldus\n", i, timing_data[i].count());
+            printf("[%u] = %ldus\n", unsigned(i), long(timing_data[i].count()));
             total_count += timing_data[i].count();
         }
         // Find mean.
@@ -749,7 +749,7 @@ passages, and more recently with desktop publishing software like Aldus PageMake
         int64_t total_count = 0;
         for EachIndex(i, timing_count)
         {
-            printf("[%llu] = %lldus\n", i, timing_data[i].count());
+            printf("[%u] = %ldus\n", unsigned(i), long(timing_data[i].count()));
             total_count += timing_data[i].count();
         }
         // Find mean.
@@ -780,7 +780,7 @@ passages, and more recently with desktop publishing software like Aldus PageMake
         int64_t total_count = 0;
         for EachIndex(i, timing_count)
         {
-            printf("[%llu] = %lldus\n", i, timing_data[i].count());
+            printf("[%u] = %ldus\n", unsigned(i), long(timing_data[i].count()));
             total_count += timing_data[i].count();
         }
         // Find mean.
