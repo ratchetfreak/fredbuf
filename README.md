@@ -8,8 +8,13 @@ Building:
 
 ```c++
 using namespace PieceTree;
+// Note: The tree builder will take ownership of this arena, so do not reuse this
+// arena for anything else.
 Arena::Arena* arena = Arena::alloc(Arena::default_params);
 TreeBuilder builder = tree_builder_start(arena);
+// Note: The arena used for the builder methods do _not_ need to be the same arena
+// which is used in the initial start method.  But it does not hurt to reuse the
+// same arena here.
 tree_builder_accept(arena, &builder, str8_mut(str8_literal("ABC")));
 tree_builder_accept(arena, &builder, str8_mut(str8_literal("DEF")));
 Tree* tree = tree_builder_finish(&builder);
@@ -34,8 +39,10 @@ Line retrieval:
 
 ```c++
 // Note: The arena here does not need to be the tree's arena.
-String8 str = tree.get_line_content(arena, Line{ 1 });
+auto scratch = Arena::scratch_begin(Arena::no_conflicts);
+String8 str = tree.get_line_content(scratch.arena, Line{ 1 });
 // 'str' contains "fooABC"
+Arena::scratch_end(scratch);
 ```
 
 Iteration:
@@ -47,6 +54,16 @@ while (not walker.exhausted())
 {
     printf("%c", walker.next());
 }
+Arena::scratch_end(scratch);
+```
+
+Tree cleanup:
+
+```c++
+release_tree(tree);
+// Note: There is also 'release_owning_snap' for terminating usage of an owning snapshot.
+//       Reference snapshots are stack-based and use the destructor to remove its reference
+//       to the underlying buffers.
 ```
 
 ## Contributing
