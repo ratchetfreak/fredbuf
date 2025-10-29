@@ -1,21 +1,25 @@
 #include "ratbuf.h"
+#include "ratbuf_btree.h"
 
 
 #include <cassert>
 
-#include <memory>
-#include <string_view>
-#include <string>
-#include <vector>
-#include <array>
-#include <sstream>
+//#include <memory>
+//#include <string_view>
+//#include <string>
+//#include <vector>
+//#include <array>
+//#include <sstream>
 #include <bit>
 
 #include "types.h"
 #include "enum-utils.h"
 #include "scope-guard.h"
+#include "util.h"
 
-void print_tree(const RatchetPieceTree::StorageTree::Node& root, const RatchetPieceTree::Tree* tree, int level = 0, size_t node_offset = 0);
+
+template<size_t MaxChildren>
+void print_tree(RatchetPieceTree::BNodeCountedGeneric<MaxChildren>* root, const RatchetPieceTree::Tree* tree, int level = 0, size_t node_offset = 0);
 
 namespace RatchetPieceTree
 {
@@ -38,34 +42,12 @@ namespace RatchetPieceTree
     }
     namespace
     {
-        void populate_line_starts(LineStarts* starts, std::string_view buf)
-        {
-            starts->clear();
-            LineStart start { };
-            starts->push_back(start);
-            const auto len = buf.size();
-            for (size_t i = 0; i < len; ++i)
-            {
-                char c = buf[i];
-                if (c == '\n')
-                {
-                    start = LineStart{ i + 1 };
-                    starts->push_back(start);
-                }
-            }
-        }
 
         RatchetPieceTree::Length tree_length(const StorageTree& root)
         {
             if (root.is_empty())
                 return { };
             return root.root_ptr()->subTreeLength();
-        }
-
-        void compute_buffer_meta(BufferMeta* meta, const StorageTree& root)
-        {
-            meta->lf_count = tree_lf_count(root);
-            meta->total_content_length = tree_length(root);
         }
     } // namespace [anon]
 
@@ -74,50 +56,58 @@ namespace RatchetPieceTree
 
     }
     template<size_t MaxChildren>
-    B_Tree<MaxChildren> B_Tree<MaxChildren>::construct_from(std::vector<NodeData> leafNodes) const
+    B_Tree<MaxChildren> B_Tree<MaxChildren>::construct_from(BTreeBlock* blk, NodeData* leafNodes, size_t leafCount)
     {
-        if(leafNodes.empty())
+        if(leafCount == 0)
         {
             return B_Tree<MaxChildren>();
         }
-        std::vector<NodePtr> nodes;
+        if(leafCount <= MaxChildren)
+        {
+            return B_Tree(reinterpret_cast<NodePtr>(construct_leaf(blk, leafNodes, 0, leafCount)), 1);
+        }
+        B_Tree<MaxChildren> result;
+        Arena::Temp scratch = Arena::scratch_begin(Arena::no_conflicts);
+        NodeVector nodes = Arena::push_array<NodePtr>(scratch.arena, leafCount/MaxChildren + 4);
+        size_t nodeCount = 0;
         size_t i = 0;
-        for(; i+ MaxChildren*2 < leafNodes.size(); i+=MaxChildren)
+        for(; i+ MaxChildren*2 < leafCount; i+=MaxChildren)
         {
-            nodes.push_back(construct_leaf(leafNodes, i, i+MaxChildren));
+            nodes[nodeCount++]=reinterpret_cast<NodePtr>(construct_leaf(blk, leafNodes, i, i+MaxChildren));
         }
-        size_t remaining = leafNodes.size() - i;
-        assert(nodes.empty() ||
-            (remaining <= (MaxChildren*2) && remaining >= MaxChildren));
-        if(nodes.empty() && remaining < MaxChildren)
-        {
-            return B_Tree(construct_leaf(leafNodes, 0, remaining), 1);
-        }
-        else
+        size_t remaining = leafCount - i;
+        assert(nodeCount>0);
+        
         {
 
-            nodes.push_back(construct_leaf(leafNodes, i, i+remaining/2));
+            nodes[nodeCount++]=reinterpret_cast<NodePtr>(construct_leaf(blk, leafNodes, i, i+remaining/2));
             i+=remaining/2;
-            nodes.push_back(construct_leaf(leafNodes, i, leafNodes.size()));
+            nodes[nodeCount++]=reinterpret_cast<NodePtr>(construct_leaf(blk, leafNodes, i, leafCount));
         }
         uint32_t depth = 1;
-        while(nodes.size() > MaxChildren)
+        NodeVector childNodes = Arena::push_array<NodePtr>(scratch.arena, leafCount/MaxChildren + 4);
+        while(nodeCount > MaxChildren)
         {
-            std::vector<NodePtr> childNodes;
+            size_t oldCount = nodeCount;
+            nodeCount = 0;
+            
             i = 0;
-            for(; i+ MaxChildren*2 < nodes.size(); i+=MaxChildren)
+            for(; i+ MaxChildren*2 < oldCount; i+=MaxChildren)
             {
-                childNodes.push_back(construct_internal(nodes, i, i+MaxChildren));
+                childNodes[nodeCount] = reinterpret_cast<NodePtr>(construct_internal(blk, nodes, i, i+MaxChildren));
             }
-            remaining = nodes.size() - i;
+            remaining = oldCount - i;
             assert((remaining <= (MaxChildren*2) && remaining >= MaxChildren));
-            childNodes.push_back(construct_internal(nodes, i, i+remaining/2));
+            childNodes[nodeCount++] = reinterpret_cast<NodePtr>(construct_internal(blk, nodes, i, i+remaining/2));
             i+=remaining/2;
-            childNodes.push_back(construct_internal(nodes, i, nodes.size()));
-            nodes = std::move(childNodes);
+            childNodes[nodeCount++] = reinterpret_cast<NodePtr>(construct_internal(blk, nodes, i, oldCount));
+            NodeVector t = nodes;
+            nodes = childNodes;
+            childNodes = t;
+            
             depth++;
         }
-        return B_Tree(construct_internal(nodes, 0, nodes.size()), depth+1);
+        return B_Tree(construct_internal(blk, nodes, 0, nodeCount), depth+1);
     }
 
     template<size_t MaxChildren>
@@ -127,56 +117,65 @@ namespace RatchetPieceTree
     }
 
     template<size_t MaxChildren>
-    B_Tree<MaxChildren> B_Tree<MaxChildren>::insert(const NodeData& x, Offset at, BufferCollection* buffers) const
+    B_Tree<MaxChildren> B_Tree<MaxChildren>::insert(BufferCollection* blk, const NodeData& x, Offset at) const
     {
-        const Node* root = root_node.get();
-        auto result = insertInto(root, x, Editor::distance(Offset(0), at), buffers);
-        size_t newNumChildren = result.nodes.size();
+        Arena::Temp scratch = scratch_begin(Arena::no_conflicts);
+        NodePtr root = root_node;
+        auto result = insertInto(scratch.arena, blk, root, x, Editor::distance(Offset(0), at));
+        size_t newNumChildren = result.count;
         if(newNumChildren > 1)
         {
-            NodePtr new_root = construct_internal(result.nodes, 0, newNumChildren);
+            NodePtr new_root = construct_internal(blk->rb_tree_blk, result.nodes, 0, newNumChildren);
+            Arena::scratch_end(scratch);
             return B_Tree<MaxChildren>(new_root, result.depth+1);
         }
         else
         {
-            if(result.nodes.empty())
+            if(result.count == 0)
             {
-
+                Arena::scratch_end(scratch);
                 return B_Tree<MaxChildren>();
             }
             else
             {
-
-                return B_Tree<MaxChildren>(std::move(result.nodes.front()), result.depth);
+                
+                Arena::scratch_end(scratch);
+                return B_Tree<MaxChildren>(std::move(result.nodes[0]), result.depth);
             }
         }
     }
 
     template<size_t MaxChildren>
-    B_Tree<MaxChildren> B_Tree<MaxChildren>::remove(Offset at, Length len, BufferCollection* buffers) const
+    B_Tree<MaxChildren> B_Tree<MaxChildren>::remove(BufferCollection* blk, Offset at, Length len) const
     {
-        TreeManipResult result = remove_from(root_node.get(), nullptr, nullptr, distance(Offset{0},at), len, buffers);
+        Arena::Temp scratch = scratch_begin(Arena::no_conflicts);
+        TreeManipResult result = remove_from(scratch.arena, blk, root_node, nullptr, nullptr, distance(Offset{0},at), len);
+        
+        B_Tree<MaxChildren> res;
 
-        if(result.nodes.empty())
+        if(result.count == 0)
         {
-            return B_Tree<MaxChildren>();
+            res = B_Tree<MaxChildren>();
         }
-        else if(result.nodes.size()== 1)
+        else if(result.count == 1)
         {
-            return B_Tree<MaxChildren>(std::move(result.nodes[0]), result.depth);
+            res = B_Tree<MaxChildren>(std::move(result.nodes[0]), result.depth);
         }
         else
         {
-            assert(result.nodes.size() < MaxChildren);
-            NodePtr new_root = construct_internal(result.nodes, 0, result.nodes.size());
-            return B_Tree<MaxChildren>(new_root, result.depth);
+            assert(result.count <= MaxChildren);
+            NodePtr new_root = construct_internal(blk->rb_tree_blk, result.nodes, 0, result.count);
+            
+            res = B_Tree<MaxChildren>(new_root, result.depth+1);
         }
+        Arena::scratch_end(scratch);
+        return res;
     }
 
     BufferCursor buffer_position(const BufferCollection* buffers, const Piece& piece, Length remainder)
     {
-        auto& starts = buffers->buffer_at(piece.index)->line_starts;
-        auto start_offset = rep(starts[rep(piece.first.line)]) + rep(piece.first.column);
+        const LineStarts* starts = &buffers->buffer_at(piece.index)->line_starts;
+        auto start_offset = rep(starts->starts[rep(piece.first.line)]) + rep(piece.first.column);
         auto offset = start_offset + rep(remainder);
 
         // Binary search for 'offset' between start and ending offset.
@@ -190,11 +189,11 @@ namespace RatchetPieceTree
         while (low <= high)
         {
             mid = low + ((high - low) / 2);
-            mid_start = rep(starts[mid]);
+            mid_start = rep(starts->starts[mid]);
 
             if (mid == high)
                 break;
-            mid_stop = rep(starts[mid + 1]);
+            mid_stop = rep(starts->starts[mid + 1]);
 
             if (offset < mid_start)
             {
@@ -219,13 +218,13 @@ namespace RatchetPieceTree
         // If the end position is the beginning of a new line, then we can just return the difference in lines.
         if (rep(end.column) == 0)
             return LFCount{ rep(retract(end.line, rep(start.line))) };
-        auto& starts = buffers->buffer_at(index)->line_starts;
+        const LineStarts* starts = &buffers->buffer_at(index)->line_starts;
         // It means, there is no LF after end.
-        if (end.line == Line{ starts.size() - 1})
+        if (end.line == Line{ starts->count - 1})
             return LFCount{ rep(retract(end.line, rep(start.line))) };
         // Due to the check above, we know that there's at least one more line after 'end.line'.
-        auto next_start_offset = starts[rep(extend(end.line))];
-        auto end_offset = rep(starts[rep(end.line)]) + rep(end.column);
+        auto next_start_offset = starts->starts[rep(extend(end.line))];
+        auto end_offset = rep(starts->starts[rep(end.line)]) + rep(end.column);
         // There are more than 1 character after end, which means it can't be LF.
         if (rep(next_start_offset) > end_offset + 1)
             return LFCount{ rep(retract(end.line, rep(start.line))) };
@@ -272,23 +271,29 @@ namespace RatchetPieceTree
     }
 
     template<size_t MaxChildren>
-    B_Tree<MaxChildren>::TreeManipResult B_Tree<MaxChildren>::insertInto_leaf(const Node* node, const NodeData& x, Length at, BufferCollection* buffers) const
+    B_Tree<MaxChildren>::TreeManipResult B_Tree<MaxChildren>::insertInto_leaf(Arena::Arena *arena, BufferCollection* blk, LeafNodePtr node, const NodeData& x, Length at) const
     {
         if(node)algo_mark(node->shared_from_this(), Traverse);
         if(node==nullptr)
         {
             B_Tree<MaxChildren>::TreeManipResult res;
-            LeafVector r;
-            r.push_back(std::move(x));
-            res.nodes.push_back(construct_leaf(r, 0, 1));
+            res.nodes = Arena::push_array<NodePtr>(arena, 1);
+            res.count = 1;
+            res.depth = 1;
+            res.nodes[0] = construct_leaf(blk->rb_tree_blk, &x, 0, 1);
+            
             return res;
         }
+        Arena::Temp scratch = Arena::scratch_begin({&arena, 1});
         auto offsets_end = node->offsets.begin()+node->childCount;
         auto insertPoint = std::lower_bound(node->offsets.begin(), offsets_end, at);
         auto insertIndex = insertPoint - node->offsets.begin();
-        std::vector<NodeData> resultch;
+        
+        NodeData* resultch = Arena::push_array<NodeData>(scratch.arena, node->childCount+2);
+        size_t resultCount = 0;
+        //std::vector<NodeData> resultch;
 
-        auto& children = std::get<std::array<NodeData, MaxChildren>>(node->children);
+        auto& children = (node->children);
 
         auto child_it = children.begin();
         auto child_insert = children.begin()+insertIndex;
@@ -303,11 +308,12 @@ namespace RatchetPieceTree
         Length split_offset = at - insert_child_start;
         for(; child_it!=child_insert; ++child_it)
         {
-            resultch.push_back(*child_it);
+            resultch[resultCount++] = (*child_it);
         }
         auto splitting_piece = (*child_it).piece;
         if(split_offset > Length{0} && split_offset < splitting_piece.length)
         {
+            BufferCollection* buffers = blk;
 
             auto insert_pos = buffer_position(buffers, splitting_piece, split_offset);
 
@@ -326,16 +332,16 @@ namespace RatchetPieceTree
             NodeData first{
                 .piece = new_piece_left
             };
-            resultch.push_back(first);
+            resultch[resultCount++] = (first);
 
-            resultch.push_back(x);
+            resultch[resultCount++] = (x);
 
             NodeData second = NodeData
             {
                 .piece = new_piece_right
             };
 
-            resultch.push_back(second);
+            resultch[resultCount++] = (second);
             ++child_it;
         }
         else
@@ -343,8 +349,8 @@ namespace RatchetPieceTree
             //TODO(ratchetfreak): combine pieces with modbuf?
             if(split_offset == Length{0})
             {
-                resultch.push_back(x);
-                resultch.push_back(*child_it);
+                resultch[resultCount++] = (x);
+                resultch[resultCount++] = (*child_it);
                 ++child_it;
             }
             else
@@ -358,76 +364,91 @@ namespace RatchetPieceTree
                     new_piece.first = old_piece.first;
                     new_piece.newline_count = LFCount{rep(new_piece.newline_count) + rep(old_piece.newline_count)};
                     new_piece.length = new_piece.length + old_piece.length;
-                    resultch.push_back(d);
+                    resultch[resultCount++] = (d);
                     ++child_it;
                 }
                 else
                 {
-                    resultch.push_back(*child_it);
+                    resultch[resultCount++] = (*child_it);
                     ++child_it;
-                    resultch.push_back(x);
+                    resultch[resultCount++] = (x);
                 }
             }
         }
 
         for(; child_it!=child_end; ++child_it)
         {
-            resultch.push_back(*child_it);
+            resultch[resultCount++] = (*child_it);
         }
+        
         B_Tree<MaxChildren>::TreeManipResult res;
-        if(resultch.size()>MaxChildren)
+        if(resultCount > MaxChildren)
         {
-            size_t mid = resultch.size()/2;
-            res.nodes.push_back(construct_leaf(resultch, 0, mid));
-            res.nodes.push_back(construct_leaf(resultch, mid, resultch.size()));
+            res.nodes = Arena::push_array<NodePtr>(arena, 2);
+            size_t mid = resultCount/2;
+            res.nodes[0] = (construct_leaf(blk->rb_tree_blk, resultch, 0, mid));
+            res.nodes[1] = (construct_leaf(blk->rb_tree_blk, resultch, mid, resultCount));
+            res.count = 2;
+            res.depth = 1;
         }
         else
         {
-            res.nodes.push_back(construct_leaf(resultch, 0, resultch.size()));
+            res.nodes = Arena::push_array<NodePtr>(arena, 1);
+            res.nodes[0] = (construct_leaf(blk->rb_tree_blk, resultch, 0, resultCount));
+            res.count = 1;
+            res.depth = 1;
         }
+        Arena::scratch_end(scratch);
         return res;
     }
 
     template<size_t MaxChildren>
-    B_Tree<MaxChildren>::TreeManipResult B_Tree<MaxChildren>::remove_from_leafs(const Node* a, const Node* b, const Node* c, Length at, Length len, BufferCollection* buffers) const
+    B_Tree<MaxChildren>::TreeManipResult B_Tree<MaxChildren>::remove_from_leafs(Arena::Arena *arena, BufferCollection* blk, LeafNodePtr a, LeafNodePtr b, LeafNodePtr c, Length at, Length len) const
     {
+        Arena::Temp scratch = Arena::scratch_begin({&arena, 1});
         // b or c might be nullptr
 
-        LeafVector allLeafs;
+        NodeData *allLeafs = Arena::push_array<NodeData>(scratch.arena, MaxChildren*3);
+        size_t leaflength = 0;
         {
-            LeafArray ch = std::get<LeafArray>(a->children);
-            for(auto it = ch.begin(); it != ch.begin()+a->childCount;++it)
+            LeafNodePtr l = (a);
+            auto ch = (l->children);
+            for(auto it = ch.begin(); it != ch.begin()+b->childCount;++it)
             {
-                allLeafs.push_back(*it);
+                allLeafs[leaflength++]=(*it);
             }
         }
         if(b!=nullptr)
         {
-            LeafArray ch = std::get<LeafArray>(b->children);
+            LeafNodePtr l = (b);
+            auto ch = (l->children);
             for(auto it = ch.begin(); it != ch.begin()+b->childCount;++it)
             {
-                allLeafs.push_back(*it);
+                allLeafs[leaflength++]=(*it);
             }
         }
         if(c!=nullptr)
         {
-            LeafArray ch = std::get<LeafArray>(c->children);
+            LeafNodePtr l = (c);
+            auto ch = (l->children);
             for(auto it = ch.begin(); it != ch.begin()+c->childCount;++it)
             {
-                allLeafs.push_back(*it);
+                allLeafs[leaflength++]=(*it);
             }
         }
-        size_t numLeafs = allLeafs.size();
+        size_t numLeafs = leaflength;
         (void)numLeafs;
 
-        LeafVector allChildren;
+        
+        NodeData *allChildren = Arena::push_array<NodeData>(scratch.arena, MaxChildren*3 + 3);
+        size_t resultCount = 0;
 
         int i = 0;
 
-        for(;i < allLeafs.size() && allLeafs[i].piece.length <= at;i++)
+        for(;i < leaflength && allLeafs[i].piece.length <= at;i++)
         {
             auto current_leaf = allLeafs[i];
-            allChildren.push_back(current_leaf);
+            allChildren[resultCount++] = (current_leaf);
             at = at - current_leaf.piece.length;
         }
 
@@ -435,16 +456,16 @@ namespace RatchetPieceTree
         if(at+len <= allLeafs[i].piece.length)
         {
             auto piece_to_split = allLeafs[i].piece;
-            auto start_split_pos = buffer_position(buffers, piece_to_split, at);
+            auto start_split_pos = buffer_position(blk, piece_to_split, at);
 
-            auto end_split_pos = buffer_position(buffers, piece_to_split, at+len);
-            auto piece_left = trim_piece_left(buffers, piece_to_split, end_split_pos);
-            Piece piece_right = trim_piece_right(buffers, piece_to_split, start_split_pos);
+            auto end_split_pos = buffer_position(blk, piece_to_split, at+len);
+            auto piece_left = trim_piece_left(blk, piece_to_split, end_split_pos);
+            Piece piece_right = trim_piece_right(blk, piece_to_split, start_split_pos);
 
             if(rep(piece_right.length) > 0)
-                allChildren.push_back({piece_right});
+                allChildren[resultCount++] = {piece_right};
             if(rep(piece_left.length) > 0)
-                allChildren.push_back({piece_left});
+                allChildren[resultCount++] = {piece_left};
 
             //split
             i++;
@@ -453,22 +474,22 @@ namespace RatchetPieceTree
         {
             if(rep(at)>0)
             {
-                auto start_split_pos = buffer_position(buffers, allLeafs[i].piece, at);
-                auto trimright = trim_piece_right(buffers, allLeafs[i].piece, start_split_pos);
-                allChildren.push_back({trimright});
+                auto start_split_pos = buffer_position(blk, allLeafs[i].piece, at);
+                auto trimright = trim_piece_right(blk, allLeafs[i].piece, start_split_pos);
+                allChildren[resultCount++] = {trimright};
             }
             len = len -  (allLeafs[i].piece.length - at);
             i++;
-            for(;i < allLeafs.size() && allLeafs[i].piece.length <= len;i++)
+            for(;i < leaflength && allLeafs[i].piece.length <= len;i++)
             {
                 len  = len - allLeafs[i].piece.length;
             }
-            if(rep(len) > 0 && i < allLeafs.size())
+            if(rep(len) > 0 && i < leaflength)
             {
-                auto end_split_pos = buffer_position(buffers, allLeafs[i].piece, len);
+                auto end_split_pos = buffer_position(blk, allLeafs[i].piece, len);
 
-                auto piece_left = trim_piece_left(buffers, allLeafs[i].piece, end_split_pos);
-                allChildren.push_back({piece_left});
+                auto piece_left = trim_piece_left(blk, allLeafs[i].piece, end_split_pos);
+                allChildren[resultCount++] = {piece_left};
                 i++;
             }
         }
@@ -476,60 +497,71 @@ namespace RatchetPieceTree
 
         //add rest
 
-        for(;i<allLeafs.size();i++)
+        for(;i< leaflength;i++)
         {
-            allChildren.push_back(allLeafs[i]);
+            allChildren[resultCount++] = allLeafs[i];
         }
 
 
         TreeManipResult result;
         result.depth = 1;
-        if(allChildren.size() > MaxChildren*3)
+        if(resultCount > MaxChildren*3)
         {
             
             size_t from = 0;
-            size_t perChild = allChildren.size()/4;
+            size_t perChild = resultCount/4;
+            result.nodes = Arena::push_array<NodePtr>(arena, 4);
+            result.count = 4;
 
-            result.nodes.push_back(construct_leaf(allChildren, from, from+perChild));
+            result.nodes[0] = (construct_leaf(blk->rb_tree_blk, allChildren, from, from+perChild));
             from+=perChild;
-            if(allChildren.size()%4 > 1)
+            if(resultCount%4 > 1)
             {
                 perChild+=1;
             }
-            result.nodes.push_back(construct_leaf(allChildren, from, from+perChild));
+            result.nodes[1] = (construct_leaf(blk->rb_tree_blk, allChildren, from, from+perChild));
             from+=perChild;
-            result.nodes.push_back(construct_leaf(allChildren, from, from+perChild));
+            result.nodes[2] = (construct_leaf(blk->rb_tree_blk, allChildren, from, from+perChild));
             from+=perChild;
-            result.nodes.push_back(construct_leaf(allChildren, from, allChildren.size()));
+            result.nodes[3] = (construct_leaf(blk->rb_tree_blk, allChildren, from, resultCount));
         }
-        else if(allChildren.size() > MaxChildren*2)
+        else if(resultCount > MaxChildren*2)
         {
             size_t from = 0;
-            size_t perChild = allChildren.size()/3;
+            size_t perChild = resultCount/3;
+            result.nodes = Arena::push_array<NodePtr>(arena, 3);
+            result.count = 3;
 
-            result.nodes.push_back(construct_leaf(allChildren, from, from+perChild));
+            result.nodes[0] = (construct_leaf(blk->rb_tree_blk, allChildren, from, from+perChild));
             from+=perChild;
-            if(allChildren.size()%3 > 1)
+            if(resultCount%3 > 1)
             {
                 perChild+=1;
             }
-            result.nodes.push_back(construct_leaf(allChildren, from, from+perChild));
+            result.nodes[1] = (construct_leaf(blk->rb_tree_blk, allChildren, from, from+perChild));
             from+=perChild;
-            result.nodes.push_back(construct_leaf(allChildren, from, allChildren.size()));
+            result.nodes[2] = (construct_leaf(blk->rb_tree_blk, allChildren, from, resultCount));
         }
-        else if(allChildren.size() > MaxChildren)
+        else if(resultCount > MaxChildren)
         {
+            
             size_t from = 0;
-            size_t mid = allChildren.size()/2;
-            result.nodes.push_back(construct_leaf(allChildren, from, from+mid));
+            size_t mid = resultCount/2;
+            result.nodes = Arena::push_array<NodePtr>(arena, 2);
+            result.count = 2;
 
-            result.nodes.push_back(construct_leaf(allChildren, mid, allChildren.size()));
+            result.nodes[0] = (construct_leaf(blk->rb_tree_blk, allChildren, from, from+mid));
+
+            result.nodes[1] = (construct_leaf(blk->rb_tree_blk, allChildren, mid, resultCount));
 
         }
-        else if(allChildren.size() > 0)
+        else if(resultCount > 0)
         {
+            result.nodes = Arena::push_array<NodePtr>(arena, 1);
+            result.count = 1;
+
             //assert(allChildren.size() >= MaxChildren/2);
-            result.nodes.push_back(construct_leaf(allChildren, 0, allChildren.size()));
+            result.nodes[0] = (construct_leaf(blk->rb_tree_blk, allChildren, 0, resultCount));
         }
 
         return result;
@@ -564,9 +596,9 @@ namespace RatchetPieceTree
         return branchless_lower_bound(begin, end, value, std::less<>{});
     }
 
-    void Tree::insert(CharOffset offset, std::string_view txt, SuppressHistory suppress_history)
+    void Tree::insert(CharOffset offset, String8 txt, SuppressHistory suppress_history)
     {
-        if (txt.empty())
+        if (txt.size)
             return;
         // This allows us to undo blocks of code.
         if (is_no(suppress_history)
@@ -578,29 +610,33 @@ namespace RatchetPieceTree
     }
 
     template<size_t MaxChildren>
-    B_Tree<MaxChildren>::TreeManipResult B_Tree<MaxChildren>::insertInto(const Node* node, const NodeData& x, Length at, BufferCollection* buffers) const
+    B_Tree<MaxChildren>::TreeManipResult B_Tree<MaxChildren>::insertInto(Arena::Arena *arena, BufferCollection* blk, const NodePtr node, const NodeData& x, Length at) const
     {
         if(node)algo_mark(node->shared_from_this(), Traverse);
         //TODO(ratchetfreak) : change result to be 1 or more ChildPtrs which is exactly the x node with the insert
         if(node==nullptr||node->isLeaf())
         {
-            return insertInto_leaf(node, x, at, buffers);
+            return insertInto_leaf(arena, blk, reinterpret_cast<LeafNodePtr>(node), x, at);
         }
         else
         {
-            const std::array<NodePtr, MaxChildren> &node_children = std::get<std::array<NodePtr, MaxChildren>>(node->children);
+            Arena::Temp scratch = Arena::scratch_begin({&arena, 1});
+            InternalNodePtr in = reinterpret_cast<InternalNodePtr>(node);
+            NodeVector node_children = (in->children);
             auto offsets_end = node->offsets.begin()+node->childCount;
             auto insertPoint = std::lower_bound(node->offsets.begin(), offsets_end, at);
             size_t insertIndex = insertPoint - node->offsets.begin();
-            auto insertChIt = node_children.begin()+insertIndex;
-            auto insertChItEnd = node_children.begin()+node->childCount;
+            auto insertChIt = node_children+insertIndex;
+            auto insertChItEnd = node_children+node->childCount;
 
-            std::vector<NodePtr> resultch;
-            auto child_it = (node_children).begin();
+            
+            NodeVector resultch = Arena::push_array<NodePtr>(scratch.arena, in->childCount + 2);
+            size_t resultCount = 0;
+            auto child_it = (node_children);
 
             for(; child_it!=insertChIt; ++child_it)
             {
-                resultch.push_back(*child_it);
+                resultch[resultCount++] = (*child_it);
             }
 
 
@@ -610,83 +646,92 @@ namespace RatchetPieceTree
                 childInsert = childInsert - node->offsets[insertIndex - 1];
             }
             auto insert_child = node_children[insertIndex];
-            auto insert_result = insertInto(insert_child.get(), x, childInsert, buffers);
+            auto insert_result = insertInto(scratch.arena, blk, insert_child, x, childInsert);
 
-            size_t newNumChildren = insert_result.nodes.size();
+            size_t newNumChildren = insert_result.count;
 
             for(int i = 0; i< newNumChildren;i++)
             {
-                resultch.push_back(insert_result.nodes[i]);
+                resultch[resultCount++] = (insert_result.nodes[i]);
             }
             child_it++;
             for(; child_it!=insertChItEnd;  ++child_it)
             {
-                resultch.push_back(*child_it);
+                resultch[resultCount++] = (*child_it);
             }
 
-            if(resultch.size() > MaxChildren)
+            TreeManipResult manipresult{};
+            manipresult.nodes = Arena::push_array<NodePtr>(arena, in->childCount + 2);
+            if(resultCount > MaxChildren)
             {
                 //split the to-be inserted node into two
-                size_t numLChild = resultch.size()/2;
+                size_t numLChild = resultCount/2;
 
-                NodePtr leftChild = construct_internal(resultch, 0, numLChild);
-                NodePtr rightChild = construct_internal(resultch, numLChild, resultch.size());
+                NodePtr leftChild = construct_internal(blk->rb_tree_blk, resultch, 0, numLChild);
+                NodePtr rightChild = construct_internal(blk->rb_tree_blk,resultch, numLChild, resultCount);
 
-                TreeManipResult manipresult;
-                manipresult.nodes.push_back(std::move(leftChild));
+                manipresult.nodes[manipresult.count++] = leftChild;
+                manipresult.nodes[manipresult.count++] = rightChild;
 
-                manipresult.nodes.push_back(std::move(rightChild));
-
-                return manipresult;
+                //return manipresult;
             }
             else
             {
-
-                auto newChild = construct_internal(resultch
-                , 0, resultch.size());
-                TreeManipResult manipresult;
-                manipresult.nodes.push_back(std::move(newChild));
-                return manipresult;
+                auto newChild = construct_internal(blk->rb_tree_blk, resultch
+                , 0, resultCount);
+                manipresult.nodes[manipresult.count++] = newChild;
+                
             }
+            Arena::scratch_end(scratch);
+            return manipresult;
         }
         // return {};
     }
 
     template<size_t MaxChildren>
-    B_Tree<MaxChildren>::TreeManipResult B_Tree<MaxChildren>::remove_from(const Node* a, const Node* b, const Node* c, Length at, Length len, BufferCollection* buffers) const
+    B_Tree<MaxChildren>::TreeManipResult B_Tree<MaxChildren>::remove_from(Arena::Arena *arena, BufferCollection* blk, NodePtr a, NodePtr b, NodePtr c, Length at, Length len) const
     {
         // at least one of a and c should not participate in the remove
         // that way the result is always big enough to make at least 1 node
-        
+        Arena::Temp scratch = Arena::scratch_begin({&arena, 1});
         if(a)algo_mark(a->shared_from_this(), Collect);
         if(b)algo_mark(b->shared_from_this(), Collect);
         if(c)algo_mark(c->shared_from_this(), Collect);
 
         if(a->isLeaf())
         {
-            return remove_from_leafs(a, b, c, at, len, buffers);
+            assert(!b || b->isLeaf());
+            assert(!c || c->isLeaf());
+            Arena::scratch_end(scratch);
+            return remove_from_leafs(arena, blk, reinterpret_cast<LeafNodePtr>(a), reinterpret_cast<LeafNodePtr>(b), reinterpret_cast<LeafNodePtr>(c), at, len);
         }
         else
         {
-            ChildVector resultChildren;
-            std::array<NodePtr, MaxChildren * 3> allChildren;
-            size_t totalChildCount;
+            size_t totalChildCount = (a?a->childCount:0)+(b?b->childCount:0)+(c?c->childCount:0);
+            assert(!b || !b->isLeaf());
+            assert(!c || !c->isLeaf());
+            NodeVector resultChildren = Arena::push_array<NodePtr>(scratch.arena, totalChildCount+3);
+            size_t childCount = 0;
+            NodeVector allChildren = Arena::push_array<NodePtr>(scratch.arena, totalChildCount);
 
             {
-                const ChildArray& chA = std::get<ChildArray>(a->children);
-                auto outputIt = allChildren.begin();
-                outputIt = std::copy_n(chA.begin(), a->childCount, outputIt);
+                InternalNodePtr ina = reinterpret_cast<InternalNodePtr>(a);
+                NodeVector chA = (ina->children);
+                auto outputIt = allChildren;
+                outputIt = std::copy_n(chA, a->childCount, outputIt);
                 totalChildCount = a->childCount;
                 if(b!=nullptr)
                 {
-                    const ChildArray& chB = std::get<ChildArray>(b->children);
-                    outputIt = std::copy_n(chB.begin(), b->childCount, outputIt);
+                    InternalNodePtr inb = reinterpret_cast<InternalNodePtr>(b);
+                    NodeVector chB = (inb->children);
+                    outputIt = std::copy_n(chB, b->childCount, outputIt);
                     totalChildCount = totalChildCount + b->childCount;
                 }
                 if(c!=nullptr)
                 {
-                    const ChildArray& chC = std::get<ChildArray>(c->children);
-                    outputIt = std::copy_n(chC.begin(), c->childCount, outputIt);
+                    InternalNodePtr inc = reinterpret_cast<InternalNodePtr>(c);
+                    NodeVector chC = (inc->children);
+                    outputIt = std::copy_n(chC, c->childCount, outputIt);
                     totalChildCount = totalChildCount + c->childCount;
                 }
             }
@@ -704,7 +749,7 @@ namespace RatchetPieceTree
                 if(recA)
                 {
                     offset = offset - recA->subTreeLength();
-                    resultChildren.push_back(std::move(recA));
+                    resultChildren[childCount++] = recA;
                 }
                 recA = recB;
                 recB = recC;
@@ -718,7 +763,7 @@ namespace RatchetPieceTree
             if(recA)
             {
                 offset = offset - recA->subTreeLength();
-                resultChildren.push_back(std::move(recA));
+                resultChildren[childCount++] = recA;
             }
             recA = recB;
             recB = recC;
@@ -744,11 +789,13 @@ namespace RatchetPieceTree
                         assert(c==nullptr);
                         if(recB)
                         {
-                            return remove_from(recB.get(), recC.get(), nullptr, offset, len, buffers);
+                            Arena::scratch_end(scratch);
+                            return remove_from(arena, blk, recB, recC, nullptr, offset, len);
                         }
                         else
                         {
-                            return remove_from(recC.get(), nullptr, nullptr, offset, len, buffers);
+                            Arena::scratch_end(scratch);
+                            return remove_from(arena, blk, recC, nullptr, nullptr, offset, len);
                         }
                     }
                     recA = recB;
@@ -758,7 +805,7 @@ namespace RatchetPieceTree
                     algo_mark(recC, Traverse);
 
                 }
-                res = remove_from(recA.get(), recB.get(), recC.get(), offset, len, buffers);
+                res = remove_from(scratch.arena, blk, recA, recB, recC, offset, len);
             }
             else
             {
@@ -779,11 +826,13 @@ namespace RatchetPieceTree
                     assert(c==nullptr); // can only come from root
                     if(recB)
                     {
-                        return remove_from(recB.get(), recC.get(), nullptr, offset, to_remove_from_first_found + to_remove_from_rest, buffers);
+                        Arena::scratch_end(scratch);
+                        return remove_from(arena, blk, recB, recC, nullptr, offset, to_remove_from_first_found + to_remove_from_rest);
                     }
                     else
                     {
-                        return remove_from(recC.get(), nullptr, nullptr, offset, to_remove_from_first_found + to_remove_from_rest, buffers);
+                        Arena::scratch_end(scratch);
+                        return remove_from(arena, blk, recC, nullptr, nullptr, offset, to_remove_from_first_found + to_remove_from_rest);
                     }
                 }
 
@@ -792,7 +841,7 @@ namespace RatchetPieceTree
                     if(recA)
                     {
                         offset = offset - recA->subTreeLength();
-                        resultChildren.push_back(std::move(recA));
+                        resultChildren[childCount++] = recA;
                     }
                     recA = recB;
                     recB = recC;
@@ -810,11 +859,13 @@ namespace RatchetPieceTree
                         assert(c==nullptr);
                         if(recB)
                         {
-                            return remove_from(recB.get(), recC.get(), nullptr, offset, to_remove_from_first_found + to_remove_from_rest, buffers);
+                            Arena::scratch_end(scratch);
+                            return remove_from(arena, blk, recB, recC, nullptr, offset, to_remove_from_first_found + to_remove_from_rest);
                         }
                         else
                         {
-                            return remove_from(recC.get(), nullptr, nullptr, offset, to_remove_from_first_found + to_remove_from_rest, buffers);
+                            Arena::scratch_end(scratch);
+                            return remove_from(arena, blk, recC, nullptr, nullptr, offset, to_remove_from_first_found + to_remove_from_rest);
                         }
                     }
                     recA = recB;
@@ -825,80 +876,122 @@ namespace RatchetPieceTree
                     algo_mark(recC, Traverse);
 
                 }
-                res = remove_from(recA.get(), recB.get(), recC.get(), offset, to_remove_from_first_found + to_remove_from_rest, buffers);
+                res = remove_from(scratch.arena, blk, recA, recB, recC, offset, to_remove_from_first_found + to_remove_from_rest);
             }
 
-            for(auto it = res.nodes.begin(); it != res.nodes.end();++it){
-                resultChildren.push_back(std::move(*it));
+            for EachIndex(it, res.count)
+            {
+                resultChildren[childCount++] = res.nodes[it];
             }
 
             for(;i<totalChildCount;i++)
             {
-                resultChildren.push_back(allChildren[i]);
+                resultChildren[childCount++] = (allChildren[i]);
             }
 
             TreeManipResult result;
             result.depth = res.depth+1;
-            if(resultChildren.size() > MaxChildren*3)
+            if(childCount > MaxChildren*3)
             {
                 size_t from = 0;
-                size_t perChild = resultChildren.size()/4;
+                size_t perChild = childCount/4;
+                result.nodes = Arena::push_array<NodePtr>(arena, 4);
+                result.count = 4;
 
-                result.nodes.push_back(construct_internal(resultChildren, from, from+perChild));
+                result.nodes[0] = (construct_internal(blk->rb_tree_blk, resultChildren, from, from+perChild));
                 from+=perChild;
-                if(resultChildren.size()%4 > 1)
+                if(childCount%4 > 1)
                 {
                     perChild+=1;
                 }
-                result.nodes.push_back(construct_internal(resultChildren, from, from+perChild));
+                result.nodes[1] = (construct_internal(blk->rb_tree_blk, resultChildren, from, from+perChild));
                 from+=perChild;
-                result.nodes.push_back(construct_internal(resultChildren, from, from+perChild));
+                result.nodes[2] = (construct_internal(blk->rb_tree_blk, resultChildren, from, from+perChild));
                 from+=perChild;
-                result.nodes.push_back(construct_internal(resultChildren, from, resultChildren.size()));
+                result.nodes[3] = (construct_internal(blk->rb_tree_blk, resultChildren, from, childCount));
             }
-            else if(resultChildren.size() > MaxChildren*2)
+            else if(childCount > MaxChildren*2)
             {
                 size_t from = 0;
-                size_t perChild = resultChildren.size()/3;
+                size_t perChild = childCount/3;
 
-                result.nodes.push_back(construct_internal(resultChildren, from, from+perChild));
+                result.nodes = Arena::push_array<NodePtr>(arena, 3);
+                result.count = 3;
+                result.nodes[0] = (construct_internal(blk->rb_tree_blk, resultChildren, from, from+perChild));
                 from+=perChild;
-                if(resultChildren.size()%3 > 1)
+                if(childCount%3 > 1)
                 {
                     perChild+=1;
                 }
-                result.nodes.push_back(construct_internal(resultChildren, from, from+perChild));
+                result.nodes[1] = (construct_internal(blk->rb_tree_blk, resultChildren, from, from+perChild));
                 from+=perChild;
-                result.nodes.push_back(construct_internal(resultChildren, from, resultChildren.size()));
+                result.nodes[2] = (construct_internal(blk->rb_tree_blk, resultChildren, from, childCount));
             }
-            else if(resultChildren.size() > MaxChildren)
+            else if(childCount > MaxChildren)
             {
                 size_t from = 0;
-                size_t mid = resultChildren.size()/2;
-                result.nodes.push_back(construct_internal(resultChildren, from, from+mid));
+                size_t mid = childCount/2;
+                result.nodes = Arena::push_array<NodePtr>(arena, 2);
+                result.count = 2;
+                result.nodes[0] = (construct_internal(blk->rb_tree_blk, resultChildren, from, from+mid));
 
-                result.nodes.push_back(construct_internal(resultChildren, mid, resultChildren.size()));
+                result.nodes[1] = (construct_internal(blk->rb_tree_blk, resultChildren, mid, childCount));
 
             }
             else
             {
-                assert(result.nodes.size() >= MaxChildren/2 || c==nullptr);
-                result.nodes.push_back(construct_internal(resultChildren, 0, resultChildren.size()));
+                assert(childCount >= MaxChildren/2 || c==nullptr);
+                result.nodes = Arena::push_array<NodePtr>(arena, 1);
+                result.count = 1;
+                result.nodes[0] = (construct_internal(blk->rb_tree_blk, resultChildren, 0, childCount));
             }
-
+            Arena::scratch_end(scratch);
             return result;
         }
     }
 
     template<size_t MaxChildren>
-    B_Tree<MaxChildren>::NodePtr B_Tree<MaxChildren>::construct_leaf(const LeafVector &data, size_t begin, size_t end) const
+    B_Tree<MaxChildren>::NodePtr B_Tree<MaxChildren>::construct_leaf(BTreeBlock* blk, const NodeData* data, size_t begin, size_t end) 
     {
+        LeafNodePtr node = nullptr;
+        BNodeBlock* node_blk = nullptr;
+        // Try to fetch a node from the free list atomically.
+        {
+            BNodeFreeList old_head;
+            BNodeFreeList next_head{};
+            os_atomic_u128_eval(&blk->free_list.leaf, &old_head.leaf);
+            do
+            {
+                if (nil_node(old_head.leaf.head))
+                {
+                    node = nullptr;
+                    break;
+                }
+                node = reinterpret_cast<LeafNodePtr>(old_head.leaf.head);
+                next_head.leaf.head = old_head.leaf.head->next;
+                next_head.leaf.tag = old_head.leaf.tag + 1;
+            } while (not os_atomic_u128_eval_cond_assign(&blk->free_list.leaf, next_head.leaf, &old_head.leaf));
+            if (node != nullptr)
+            {
+                node_blk = node->blk;
+            }
+        }
+
+        if (node==nullptr)
+        {
+            node = Arena::push_array_no_zero<BNodeCountedLeaf<MaxChildren>>(blk->alloc_arena, 1);
+            node_blk = Arena::push_array<BNodeBlock>(blk->alloc_arena, 1);
+        }
+        //take_node_ref(node);
+        node->type = NodeType::LEAF;
 
         size_t numChild = end-begin;
         assert(numChild <= MaxChildren);
-        std::array<NodeData, MaxChildren> new_left_children;
-        std::array<Length, MaxChildren>  new_left_offsets;
-        std::array<LFCount, MaxChildren>  new_left_linefeed;
+        auto result = reinterpret_cast<NodePtr>(node);
+        std::array<NodeData, MaxChildren>& new_left_children = node->children;
+        std::array<Length, MaxChildren>&  new_left_offsets = result->offsets;
+        std::array<LFCount, MaxChildren>&  new_left_linefeed = result->lineFeeds;
+        result->childCount = numChild;
         Length acc{0};
         LFCount linefeed{0};
         for(int i = 0; i < numChild; i++)
@@ -909,25 +1002,60 @@ namespace RatchetPieceTree
             linefeed =LFCount {rep(linefeed) + rep(data[begin+i].piece.newline_count)};
             new_left_linefeed[i] = linefeed;
         }
-        auto result = std::make_shared<Node>(new_left_children, new_left_offsets, new_left_linefeed, end-begin);
         algo_mark(result, Made);
         return result;
     }
 
 
     template<size_t MaxChildren>
-    B_Tree<MaxChildren>::NodePtr B_Tree<MaxChildren>::construct_internal(const ChildVector &data, size_t begin, size_t end) const
+    B_Tree<MaxChildren>::NodePtr B_Tree<MaxChildren>::construct_internal(BTreeBlock* blk, B_Tree<MaxChildren>::NodeVector data, size_t begin, size_t end) 
     {
+        InternalNodePtr node = nullptr;
+        BNodeBlock* node_blk = nullptr;
+        // Try to fetch a node from the free list atomically.
+        {
+            BNodeFreeList old_head;
+            BNodeFreeList next_head{};
+            os_atomic_u128_eval(&blk->free_list.leaf, &old_head.leaf);
+            do
+            {
+                if (nil_node(old_head.leaf.head))
+                {
+                    node = nullptr;
+                    break;
+                }
+                node = reinterpret_cast<InternalNodePtr>(old_head.leaf.head);
+                next_head.leaf.head = old_head.leaf.head->next;
+                next_head.leaf.tag = old_head.leaf.tag + 1;
+            } while (not os_atomic_u128_eval_cond_assign(&blk->free_list.leaf, next_head.leaf, &old_head.leaf));
+            if (node!=nullptr)
+            {
+                node_blk = node->blk;
+            }
+        }
+
+        if (node==nullptr)
+        {
+            node = Arena::push_array_no_zero<BNodeCountedInternal<MaxChildren>>(blk->alloc_arena, 1);
+            node_blk = Arena::push_array<BNodeBlock>(blk->alloc_arena, 1);
+        }
+        //take_node_ref(node);
+        node->type = NodeType::LEAF;
+
         size_t numChild = end-begin;
         assert(numChild <= MaxChildren);
-        std::array<NodePtr, MaxChildren> new_left_children;
-        std::array<Length, MaxChildren>  new_left_offsets;
-        std::array<LFCount, MaxChildren>  new_left_linefeed;
+        auto result = reinterpret_cast<NodePtr>(node);
+        
+        assert(numChild <= MaxChildren);
+        NodeVector new_left_children = &node->children[0];
+        std::array<Length, MaxChildren>&  new_left_offsets = result->offsets;
+        std::array<LFCount, MaxChildren>&  new_left_linefeed = result->lineFeeds;
         Length acc{0};
         LFCount linefeed{0};
         for(int i = 0; i < numChild; i++)
         {
-            new_left_children[i] =data[begin+i];
+            new_left_children[i] = data[begin+i];
+            take_node_ref(data[begin+i]);
              acc = acc + data[begin+i]->subTreeLength();
             new_left_offsets[i] = acc;
             linefeed =LFCount {rep(linefeed) + rep(data[begin+i]->subTreeLineFeeds())};
@@ -935,15 +1063,14 @@ namespace RatchetPieceTree
 
         }
 
-        auto result = std::make_shared<Node>(new_left_children, new_left_offsets, new_left_linefeed, end-begin);
         algo_mark(result, Made);
         return result;
     }
 
     template<size_t MaxChildren>
-    const B_Tree<MaxChildren>::Node* B_Tree<MaxChildren>::root_ptr() const
+    B_Tree<MaxChildren>::NodePtr B_Tree<MaxChildren>::root_ptr() const
     {
-        return root_node.get();
+        return root_node;
     }
 
 #ifdef TEXTBUF_DEBUG
@@ -955,25 +1082,32 @@ namespace RatchetPieceTree
         // 2. all leafNodes are at the same depth
         
         typedef B_Tree<MaxChildren>::NodePtr NPtr;
-        typedef B_Tree<MaxChildren>::ChildArray  ChArr;
-        typedef B_Tree<MaxChildren>::LeafArray  LeafArr;
+        typedef B_Tree<MaxChildren>::InternalNodePtr INPtr;
+        typedef B_Tree<MaxChildren>::LeafNodePtr LNPtr;
+        //typedef B_Tree<MaxChildren>::ChildArray  ChArr;
+        //typedef B_Tree<MaxChildren>::LeafArray  LeafArr;
         std::vector<NPtr> layer;
         std::vector<NPtr> next_layer;
         
         if(root.is_empty() || root.root_ptr()->isLeaf())
+        {
+            assert(root.root_ptr()->childCount <= MaxChildren);
             return;
-        
-        auto& children = std::get<ChArr>(root.root_ptr()->children);
-        next_layer.assign(children.begin(), children.begin()+root.root_ptr()->childCount);
+        }
+        INPtr rn = reinterpret_cast<INPtr>(root.root_ptr());
+        auto& children = (rn->children);
+        next_layer.assign(&children[0], &children[0]+root.root_ptr()->childCount);
         while(!next_layer.front()->isLeaf())
         {
             layer = std::move(next_layer);
             next_layer.clear();
             for(auto nodeIt = layer.begin(); nodeIt != layer.end();++nodeIt)
             {
+        
                 assert(!(*nodeIt)->isLeaf());
                 assert((*nodeIt)->childCount >= MaxChildren/2);
-                auto& node_children = std::get<ChArr>((*nodeIt)->children);
+                INPtr in = reinterpret_cast<INPtr>(*nodeIt);
+                auto& node_children = (in->children);
                 assert((*nodeIt)->offsets.back() == (*nodeIt)->offsets[(*nodeIt)->childCount-1]);
                 assert((*nodeIt)->lineFeeds.back() == (*nodeIt)->lineFeeds[(*nodeIt)->childCount-1]);
                 
@@ -990,13 +1124,16 @@ namespace RatchetPieceTree
                     assert(rep(node->lineFeeds.back()) == lineDifference);
                     prevLineEnd = (*nodeIt)->lineFeeds[childIndex];
                 }
-                next_layer.insert(next_layer.end(), node_children.begin(), node_children.begin()+(*nodeIt)->childCount);
+                next_layer.insert(next_layer.end(), &node_children[0], &node_children[0]+(*nodeIt)->childCount);
             }
         }
         layer = std::move(next_layer);
         for(auto nodeIt = layer.begin(); nodeIt != layer.end();++nodeIt)
         {
-            auto& node_children = std::get<LeafArr>((*nodeIt)->children);
+            assert((*nodeIt)->isLeaf());
+                
+            LNPtr ln = reinterpret_cast<LNPtr>(*nodeIt);
+            auto& node_children = ((ln)->children);
             LFCount prevLineEnd{};
             Length prevOffset{};
             for(size_t childIndex = 0; childIndex < (*nodeIt)->childCount; childIndex++)
@@ -1017,52 +1154,172 @@ namespace RatchetPieceTree
         }
     }
 #endif
+}
 
-    Tree::Tree():
-        buffers{ }
+namespace RatchetPieceTree
+{
+        namespace
     {
-        build_tree();
+        struct LineStartsNode
+        {
+            LineStartsNode* next;
+            LineStart start;
+        };
+
+        struct LineStartsList
+        {
+            LineStartsNode* first;
+            LineStartsNode* last;
+            uint64_t count;
+        };
+
+        void push_line_starts_node(Arena::Arena* arena, LineStartsList* lst, LineStart start)
+        {
+            LineStartsNode* node = Arena::push_array<LineStartsNode>(arena, 1);
+            node->start = start;
+            SLLQueuePush(lst->first, lst->last, node);
+            ++lst->count;
+        }
+
+        LineStarts join_line_starts_list(Arena::Arena* arena, const LineStartsList& lst)
+        {
+            LineStarts result{};
+            result.starts = Arena::push_array_no_zero<LineStart>(arena, lst.count);
+            result.count = lst.count;
+            uint64_t i = 0;
+            for EachNode(n, lst.first)
+            {
+                result.starts[i++] = n->start;
+            }
+            return result;
+        }
+
+        void populate_line_starts(Arena::Arena* arena, LineStarts* starts, String8 buf)
+        {
+            LineStartsList lst{};
+            LineStart start { };
+            auto scratch = Arena::scratch_begin({ &arena, 1 });
+            push_line_starts_node(scratch.arena, &lst, start);
+            for EachIndex(i, buf.size)
+            {
+                char c = buf.str[i];
+                if (c == '\n')
+                {
+                    start = LineStart{ i + 1 };
+                    push_line_starts_node(scratch.arena, &lst, start);
+                }
+            }
+            *starts = join_line_starts_list(arena, lst);
+            Arena::scratch_end(scratch);
+        }
+
+        void compute_buffer_meta(BufferMeta* meta, const StorageTree& root)
+        {
+            meta->lf_count = tree_lf_count(root);
+            meta->total_content_length = tree_length(root);
+        }
+
+        void append_mut_buf_start(BufferCollection* collection, LineStart start)
+        {
+            LineStart* new_starts = Arena::push_array_no_zero_aligned<LineStart>(collection->mut_buf_starts_arena, 1, Arena::Alignment{ alignof(LineStart) });
+            LineStarts* starts = &collection->mod_buffer.line_starts;
+            assert(starts->starts + starts->count == new_starts);
+            new_starts[0] = start;
+            ++starts->count;
+        }
+
+        void grow_mut_buf(BufferCollection* collection, uint64_t grow_by)
+        {
+            if (grow_by == 0)
+                return;
+            char* buf = Arena::push_array_no_zero_aligned<char>(collection->mut_buf_arena, grow_by, Arena::Alignment{ alignof(char) });
+            FRED_UNUSED(buf);
+            // When this buffer is created, it was originally designated a null-terminator slot at the beginning, so new buffers we
+            // allocate will need a null-terminator appended.
+            assert(collection->mod_buffer.buffer.str + collection->mod_buffer.buffer.size + 1 == buf);
+            // Note: We do not change the base of 'str', only its size.
+            collection->mod_buffer.buffer.size += grow_by;
+            // Append our null to the newly returned buffer piece.
+            collection->mod_buffer.buffer.str[collection->mod_buffer.buffer.size] = 0;
+        }
+    } // namespace [anon]
+    
+    const CharBuffer* BufferCollection::buffer_at(BufferIndex index) const
+    {
+        if (index == BufferIndex::ModBuf)
+            return &mod_buffer;
+        return &orig_buffers.buffers[rep(index)];
     }
 
-    Tree::Tree(Buffers&& buffers):
-        buffers{ std::move(buffers) }
+    CharOffset BufferCollection::buffer_offset(BufferIndex index, const BufferCursor& cursor) const
+    {
+        LineStart* starts = buffer_at(index)->line_starts.starts;
+        return CharOffset{ rep(starts[rep(cursor.line)]) + rep(cursor.column) };
+    }
+
+    // Buffer collection management.
+    void dec_buffer_ref(BufferCollection* collection)
+    {
+        uint64_t count = os_atomic_u64_dec_eval(collection->orig_buffers.ref_count);
+        if (count == 0)
+        {
+            // Note: The arena used to allocate nodes is the same one for the immutable buffers,
+            // so we do not need to release it.
+            Arena::release(collection->mut_buf_starts_arena);
+            Arena::release(collection->undo_redo_stack_arena);
+            Arena::release(collection->mut_buf_arena);
+            Arena::release(collection->immutable_buf_arena);
+        }
+    }
+
+    BufferCollection take_buffer_ref(const BufferCollection* collection)
+    {
+        FRED_UNUSED_RESULT(os_atomic_u64_inc_eval(collection->orig_buffers.ref_count));
+        return *collection;
+    }
+    
+    Tree::Tree(BufferCollection buffers):
+        buffers{ buffers }
     {
         build_tree();
     }
 
     void Tree::build_tree()
     {
-        buffers.mod_buffer.line_starts.clear();
-        buffers.mod_buffer.buffer.clear();
+        take_buffer_ref(&buffers);
         // In order to maintain the invariant of other buffers, the mod_buffer needs a single line-start of 0.
-        buffers.mod_buffer.line_starts.push_back({});
+        append_mut_buf_start(&buffers, {});
         last_insert = { };
 
-        const auto buf_count = buffers.orig_buffers.size();
-        std::vector<NodeData> leafNodes;
+        const auto buf_count = buffers.orig_buffers.count;
+        
+        size_t leafCount = 0;
+        Arena::Temp scratch = Arena::scratch_begin(Arena::no_conflicts);
+        NodeData* leafNodes = Arena::push_array<NodeData>(scratch.arena, buf_count);
 
         for (size_t i = 0; i < buf_count; ++i)
         {
-            const auto& buf = *buffers.orig_buffers[i];
-            assert(not buf.line_starts.empty());
+            const auto& buf = buffers.orig_buffers.buffers[i];
+            assert(buf.line_starts.count>0);
             // If this immutable buffer is empty, we can avoid creating a piece for it altogether.
-            if (buf.buffer.empty())
+            if (buf.buffer.size == 0)
                 continue;
-            auto last_line = Line{ buf.line_starts.size() - 1 };
+            auto last_line = Line{ buf.line_starts.count - 1 };
             // Create a new node that spans this buffer and retains an index to it.
             // Insert the node into the balanced tree.
             Piece piece {
                 .index = BufferIndex{ i },
                 .first = { .line = Line{ 0 }, .column = Column{ 0 } },
-                .last = { .line = last_line, .column = Column{ buf.buffer.size() - rep(buf.line_starts[rep(last_line)]) } },
-                .length = Length{ buf.buffer.size() },
+                .last = { .line = last_line, .column = Column{ buf.buffer.size - rep(buf.line_starts.starts[rep(last_line)]) } },
+                .length = Length{ buf.buffer.size },
                 // Note: the number of newlines
                 .newline_count = LFCount{ rep(last_line) }
             };
-            leafNodes.push_back({piece});
+            leafNodes[leafCount++]={piece};
         }
-        root = root.construct_from(leafNodes);
-
+        root = root.construct_from(buffers.rb_tree_blk, leafNodes, leafCount);
+        
+        Arena::scratch_end(scratch);
         compute_buffer_meta();
     }
 
@@ -1078,18 +1335,19 @@ namespace RatchetPieceTree
         internal_remove(offset, count);
     }
 
-    void Tree::line_end_crlf(CharOffset* offset, const BufferCollection* buffers, const StorageTree::Node& node, Line line)
+    void Tree::line_end_crlf(CharOffset* offset, const BufferCollection* buffers, StorageTree::NodePtr node, Line line)
     {
         
         assert(line != Line::IndexBeginning);
         auto line_index = rep(retract(line));
 
-        const StorageTree::Node* n = &node;
-        const StorageTree::Node* prevNode = nullptr;
+        StorageTree::NodePtr n = (node);
+        StorageTree::NodePtr prevNode = nullptr;
         
         while(!n->isLeaf())
         {
-            const StorageTree::ChildArray& children = std::get<StorageTree::ChildArray>(n->children);
+            StorageTree::InternalNodePtr in = reinterpret_cast<StorageTree::InternalNodePtr>(&node);
+            StorageTree::NodeVector children = (&in->children[0]);
             int i;
             for(i = 0; i < n->childCount;i++)
             {
@@ -1100,17 +1358,19 @@ namespace RatchetPieceTree
                         line_index -= rep(n->lineFeeds[i-1]);
                         *offset = *offset + (n->offsets[i-1]);
                     }
-                    n = children[i].get();
+                    n = children[i];
                     if(i>0)
                     {
-                        prevNode = children[i].get();
+                        prevNode = children[i];
                     }
                     else
                     {
                         if(prevNode!=nullptr)
                         {
-                            const StorageTree::ChildArray& prevChildren = std::get<StorageTree::ChildArray>(prevNode->children);
-                            prevNode = prevChildren[prevNode->childCount-1].get();
+                            
+                            StorageTree::InternalNodePtr pn = reinterpret_cast<StorageTree::InternalNodePtr>(&node);
+                            const StorageTree::NodeVector prevChildren = (&pn->children[0]);
+                            prevNode = prevChildren[prevNode->childCount-1];
                         }
                     }
                     i=0;
@@ -1125,10 +1385,12 @@ namespace RatchetPieceTree
                 line_index -= rep(n->lineFeeds[i-1]);
                 *offset = *offset + (n->offsets[i-1]);
 
-                n = children[i].get();
+                n = children[i];
             }
         }
-        const StorageTree::LeafArray& children = std::get<StorageTree::LeafArray>(n->children);
+        StorageTree::LeafNodePtr ln = reinterpret_cast<StorageTree::LeafNodePtr>(n);
+
+        NodeData* children = (&ln->children[0]);
         int i;
         for(i = 0; i < n->childCount;i++)
         {
@@ -1153,7 +1415,10 @@ namespace RatchetPieceTree
         {
             if(prevNode != nullptr)
             {
-                const StorageTree::LeafArray& prevChildren = std::get<StorageTree::LeafArray>(prevNode->children);
+                
+                StorageTree::LeafNodePtr pln = reinterpret_cast<StorageTree::LeafNodePtr>(prevNode);
+
+                NodeData* prevChildren = (&pln->children[0]);
                 prevPiece = prevChildren[prevNode->childCount-1].piece;
             }
         }
@@ -1170,7 +1435,7 @@ namespace RatchetPieceTree
             {
                 auto* charbuffer = buffers->buffer_at(piece.index);
                 auto buf_offset = buffers->buffer_offset(piece.index, piece.first)+len;
-                const char* p = charbuffer->buffer.data() + rep(buf_offset);
+                const char* p = charbuffer->buffer.str + rep(buf_offset);
                 if(*p == '\n')
                 {
                     p--;
@@ -1197,7 +1462,7 @@ namespace RatchetPieceTree
     {
         LineRange range{ };
         line_start<&Tree::accumulate_value>(&range.first, &buffers, root, line);
-        line_end_crlf(&range.last, &buffers, *(root.root_ptr()), extend(line));
+        line_end_crlf(&range.last, &buffers, (root.root_ptr()), extend(line));
         return range;
     }
 
@@ -1208,9 +1473,11 @@ namespace RatchetPieceTree
         line_start<&Tree::accumulate_value>(&range.last, &buffers, root, extend(line));
         return range;
     }
-    OwningSnapshot Tree::owning_snap() const
+    OwningSnapshot* Tree::owning_snap(Arena::Arena* arena) const
     {
-        return OwningSnapshot{ this };
+        uint8_t* blob = Arena::push_array_aligned<uint8_t>(arena, sizeof(OwningSnapshot), Arena::Alignment{ alignof(OwningSnapshot) });
+        OwningSnapshot* snap = new (blob) OwningSnapshot{ arena, this };
+        return snap;
     }
     ReferenceSnapshot Tree::ref_snap() const
     {
@@ -1224,7 +1491,7 @@ namespace RatchetPieceTree
             return '\0';
         auto* buffer = buffers.buffer_at(result.node->piece.index);
         auto buf_offset = buffers.buffer_offset(result.node->piece.index, result.node->piece.first);
-        const char* p = buffer->buffer.data() + rep(buf_offset) + rep(result.remainder);
+        const char* p = buffer->buffer.str + rep(buf_offset) + rep(result.remainder);
         return *p;
     }
     
@@ -1243,11 +1510,11 @@ namespace RatchetPieceTree
             return LFCount{ rep(retract(end.line, rep(start.line))) };
         auto& starts = buffers->buffer_at(index)->line_starts;
         // It means, there is no LF after end.
-        if (end.line == Line{ starts.size() - 1})
+        if (end.line == Line{ starts.count - 1})
             return LFCount{ rep(retract(end.line, rep(start.line))) };
         // Due to the check above, we know that there's at least one more line after 'end.line'.
-        auto next_start_offset = starts[rep(extend(end.line))];
-        auto end_offset = rep(starts[rep(end.line)]) + rep(end.column);
+        auto next_start_offset = starts.starts[rep(extend(end.line))];
+        auto end_offset = rep(starts.starts[rep(end.line)]) + rep(end.column);
         // There are more than 1 character after end, which means it can't be LF.
         if (rep(next_start_offset) > end_offset + 1)
             return LFCount{ rep(retract(end.line, rep(start.line))) };
@@ -1257,27 +1524,18 @@ namespace RatchetPieceTree
         return LFCount{ rep(retract(end.line, rep(start.line))) };
     }
 
-    void Tree::get_line_content(std::string* res, Line line) const
+    String8 Tree::get_line_content(Arena::Arena* arena, Line line) const
     {
+        
         // Reset the buffer.
-        res->clear();
+        
         if (line == Line::IndexBeginning)
-            return;
-        std::stringstream buf;
-        assemble_line(&buf, root, line);
-        *res = buf.str();
+            return {};
+        
+        return assemble_line(arena, &buffers, meta, root, line);
+        
     }
 
-    void Tree::get_line_content(std::stringstream* buf, Line line) const
-    {
-        // Reset the buffer.
-        buf->clear();
-        if (line == Line::IndexBeginning)
-            return;
-        
-        assemble_line(buf, root, line);
-        
-    }
 
     // Direct history manipulation.
     void Tree::commit_head(CharOffset offset)
@@ -1295,33 +1553,27 @@ namespace RatchetPieceTree
         compute_buffer_meta();
     }
 
-    void Tree::assemble_line(std::stringstream* buf, const StorageTree& node, Line line) const
+    String8 Tree::assemble_line(Arena::Arena* arena, const BufferCollection* buffers, const BufferMeta& meta, const StorageTree& node, Line line) 
     {
+        String8 res = str8_empty;
         if(node.is_empty())
-            return;
+            return res;
+        Arena::Temp scratch = Arena::scratch_begin({&arena, 1});
         CharOffset line_offset{ };
-        line_start<&Tree::accumulate_value>(&line_offset, &buffers, node, line);
-        TreeWalker walker{ this, line_offset };
+        line_start<&Tree::accumulate_value>(&line_offset, buffers, node, line);
+        TreeWalker walker{ scratch.arena, buffers, meta, &node, line_offset };
+        String8List serial_lst{};
+        str8_serial_begin(scratch.arena, &serial_lst);
         while (not walker.exhausted())
         {
             char c = walker.next();
             if (c == '\n')
                 break;
-            buf->put(c);
+            str8_serial_push_char(scratch.arena, &serial_lst, c);
         }
-    }
-
-    const CharBuffer* BufferCollection::buffer_at(BufferIndex index) const
-    {
-        if (index == BufferIndex::ModBuf)
-            return &mod_buffer;
-        return orig_buffers[rep(index)].get();
-    }
-
-    CharOffset BufferCollection::buffer_offset(BufferIndex index, const BufferCursor& cursor) const
-    {
-        auto& starts = buffer_at(index)->line_starts;
-        return CharOffset{ rep(starts[rep(cursor.line)]) + rep(cursor.column) };
+        res = str8_serial_end(arena, serial_lst);
+        Arena::scratch_end(scratch);
+        return res;
     }
 
     void print_piece(const RatchetPieceTree::Piece& piece, const RatchetPieceTree::Tree* tree, int level)
@@ -1334,41 +1586,44 @@ namespace RatchetPieceTree
                     rep(piece.length), rep(piece.newline_count));
         auto* buffer = tree->buffers.buffer_at(piece.index);
         auto offset = tree->buffers.buffer_offset(piece.index, piece.first);
-        printf("%.*sPiece content: %.*s\n", level, levels, static_cast<int>(piece.length), buffer->buffer.data() + rep(offset));
+        printf("%.*sPiece content: %.*s\n", level, levels, static_cast<int>(piece.length), buffer->buffer.str + rep(offset));
     }
     void print_tree(const RatchetPieceTree::Tree& tree)
     {
-        ::print_tree(*(tree.root.root_ptr()), &tree);
+        ::print_tree((tree.root.root_ptr()), &tree);
     }
 
-    Piece Tree::build_piece(std::string_view txt)
+    Piece Tree::build_piece(String8 txt)
     {
-        auto start_offset = buffers.mod_buffer.buffer.size();
-        populate_line_starts(&scratch_starts, txt);
+        auto start_offset = buffers.mod_buffer.buffer.size;
+        auto scratch = Arena::scratch_begin(Arena::no_conflicts);
+        LineStarts scratch_starts{};
+        populate_line_starts(scratch.arena, &scratch_starts, txt);
         auto start = last_insert;
         // TODO: Handle CRLF (where the new buffer starts with LF and the end of our buffer ends with CR).
         // Offset the new starts relative to the existing buffer.
-        for (auto& new_start : scratch_starts)
+        for EachIndex(i, scratch_starts.count)
         {
-            new_start = extend(new_start, start_offset);
+            LineStart* new_start = &scratch_starts.starts[i];
+            *new_start = extend(*new_start, start_offset);
         }
         // Append new starts.
+        auto new_starts_end = scratch_starts.count;
         // Note: we can drop the first start because the algorithm always adds an empty start.
-        auto new_starts_end = scratch_starts.size();
-        buffers.mod_buffer.line_starts.reserve(buffers.mod_buffer.line_starts.size() + new_starts_end);
         for (size_t i = 1; i < new_starts_end; ++i)
         {
-            buffers.mod_buffer.line_starts.push_back(scratch_starts[i]);
+            append_mut_buf_start(&buffers, scratch_starts.starts[i]);
         }
-        auto old_size = buffers.mod_buffer.buffer.size();
-        buffers.mod_buffer.buffer.resize(buffers.mod_buffer.buffer.size() + txt.size());
-        auto insert_at = buffers.mod_buffer.buffer.data() + old_size;
-        std::copy(txt.data(), txt.data() + txt.size(), insert_at);
+        auto old_size = buffers.mod_buffer.buffer.size;
+        grow_mut_buf(&buffers, txt.size);
+        char* insert_at = buffers.mod_buffer.buffer.str + old_size;
+        memcpy(insert_at, txt.str, txt.size);
+        Arena::scratch_end(scratch);
 
         // Build the new piece for the inserted buffer.
-        auto end_offset = buffers.mod_buffer.buffer.size();
-        auto end_index = buffers.mod_buffer.line_starts.size() - 1;
-        auto end_col = end_offset - rep(buffers.mod_buffer.line_starts[end_index]);
+        auto end_offset = buffers.mod_buffer.buffer.size;
+        auto end_index = buffers.mod_buffer.line_starts.count - 1;
+        auto end_col = end_offset - rep(buffers.mod_buffer.line_starts.starts[end_index]);
         BufferCursor end_pos = { .line = Line{ end_index }, .column = Column{ end_col } };
         Piece piece = { .index = BufferIndex::ModBuf,
                         .first = start,
@@ -1386,7 +1641,7 @@ namespace RatchetPieceTree
             return { };
         Offset node_start_offset {};
         Line newline_count {};
-        const StorageTree::Node* node = tree.root_ptr();
+        StorageTree::NodePtr node = tree.root_ptr();
         if(!node)
         {
             NodePosition result { };
@@ -1395,7 +1650,8 @@ namespace RatchetPieceTree
         
         while(!node->isLeaf())
         {
-            auto& children = std::get<StorageTree::ChildArray>(node->children);
+            StorageTree::InternalNodePtr in = reinterpret_cast<StorageTree::InternalNodePtr>(node);
+            StorageTree::NodeVector children = (&in->children[0]);
             int i = 0;
             for(; i<node->childCount; i++)
             {
@@ -1406,7 +1662,7 @@ namespace RatchetPieceTree
                         node_start_offset = node_start_offset + node->offsets[i-1];
                         newline_count = extend(newline_count, rep(node->lineFeeds[i-1]));
                     }
-                    node = children[i].get();
+                    node = children[i];
                     break;
                 }
                 //node_start_offset += rep(node->offsets[i]);
@@ -1418,10 +1674,12 @@ namespace RatchetPieceTree
                     node_start_offset = node_start_offset+ node->offsets[node->childCount-2];
                     newline_count = extend(newline_count, rep(node->lineFeeds[node->childCount-2]));
                 }
-                node = children[node->childCount-1].get();
+                node = children[node->childCount-1];
             }
         }
-        auto& children = std::get<StorageTree::LeafArray>(node->children);
+        StorageTree::LeafNodePtr ln = reinterpret_cast<StorageTree::LeafNodePtr>(node);
+            
+        auto& children = (ln->children);
         int i = 0;
         for(; i<node->childCount; i++)
         {
@@ -1467,59 +1725,106 @@ namespace RatchetPieceTree
     }
 
 
+    namespace
+    {
+        void push_ur_node(Arena::Arena* arena, UndoRedoEntry** free_list, UndoRedoList* lst, const StorageTree& root, CharOffset op_offset)
+        {
+            UndoRedoEntry* entry = nullptr;
+            if (*free_list != nullptr)
+            {
+                entry = *free_list;
+                SLLStackPop(*free_list);
+            }
+            else
+            {
+                // Since the RB tree has a non-trivial dtor, we must allocate this as a blob.
+                uint8_t* blob = Arena::push_array_no_zero<uint8_t>(arena, sizeof(UndoRedoEntry));
+                entry = new (blob) UndoRedoEntry{ .root = StorageTree{} };
+            }
+            zero_bytes(entry);
+            entry->root = root.dup();
+            entry->op_offset = op_offset;
+            SLLQueuePushFront(lst->first, lst->last, entry);
+            ++lst->count;
+        }
+
+        UndoRedoEntry* pop_ur_node(UndoRedoList* lst)
+        {
+            UndoRedoEntry* entry = lst->first;
+            SLLQueuePop(lst->first, lst->last);
+            --lst->count;
+            entry->next = nullptr;
+            // Now we invoke the dtor to ensure the RB tree signals the release.
+            entry->~UndoRedoEntry();
+            return entry;
+        }
+    } // namespace [anon]
+
+
     void Tree::append_undo(const StorageTree& old_root, CharOffset op_offset)
     {
         // Can't redo if we're creating a new undo entry.
-        if (not redo_stack.empty())
+        if (redo_stack.count != 0)
         {
-            redo_stack.clear();
+            do
+            {
+                UndoRedoEntry* e = pop_ur_node(&redo_stack);
+                SLLStackPush(free_undo_list, e);
+            } while (redo_stack.first != nullptr);
         }
-        undo_stack.push_front({ .root = old_root, .op_offset = op_offset });
+        push_ur_node(buffers.undo_redo_stack_arena, &free_undo_list, &undo_stack, old_root, op_offset);
     }
 
     UndoRedoResult Tree::try_undo(CharOffset op_offset)
     {
-        if (undo_stack.empty())
+        if (undo_stack.count == 0)
             return { .success = false, .op_offset = CharOffset{ } };
-        redo_stack.push_front({ .root = root, .op_offset = op_offset });
-        auto [node, undo_offset] = undo_stack.front();
-        root = node;
-        undo_stack.pop_front();
+        push_ur_node(buffers.undo_redo_stack_arena, &free_undo_list, &redo_stack, root, op_offset);
+        auto [nx, node, undo_offset] = static_cast<UndoRedoEntry&&>(*undo_stack.first);
+        root = node.dup();
+        UndoRedoEntry* e = pop_ur_node(&undo_stack);
+        SLLStackPush(free_undo_list, e);
         compute_buffer_meta();
         return { .success = true, .op_offset = undo_offset };
     }
 
     UndoRedoResult Tree::try_redo(CharOffset op_offset)
     {
-        if (redo_stack.empty())
+        if (redo_stack.count == 0)
             return { .success = false, .op_offset = CharOffset{ } };
-        undo_stack.push_front({ .root = root, .op_offset = op_offset });
-        auto [node, redo_offset] = redo_stack.front();
-        root = node;
-        redo_stack.pop_front();
+        push_ur_node(buffers.undo_redo_stack_arena, &free_undo_list, &undo_stack, root, op_offset);
+        auto [nx, node, redo_offset] = static_cast<UndoRedoEntry&&>(*redo_stack.first);
+        root = node.dup();
+        UndoRedoEntry* e = pop_ur_node(&redo_stack);
+        SLLStackPush(free_undo_list, e);
         compute_buffer_meta();
         return { .success = true, .op_offset = redo_offset };
     }
 
-    void Tree::internal_insert(CharOffset offset, std::string_view txt)
+    void Tree::internal_insert(CharOffset offset, String8 txt)
     {
-        assert(not txt.empty());
+        assert(txt.size>0);
         ScopeGuard guard{ [&] {
             compute_buffer_meta();
 #ifdef TEXTBUF_DEBUG
             satisfies_btree_invariant(root);
 #endif
         } };
-        end_last_insert = extend(offset, txt.size());
+        end_last_insert = extend(offset, txt.size);
 
+        StorageTree old_tree = root;
         if (root.is_empty())
         {
             auto piece = build_piece(txt);
-            root = root.insert({ piece }, CharOffset{ 0 }, &buffers);
-            return;
+            root = root.insert(&buffers, { piece }, CharOffset{ 0 });
+            
         }
-        auto piece = build_piece(txt);
-        root = root.insert({ piece }, offset, &buffers);
+        else
+        {
+            auto piece = build_piece(txt);
+            root = root.insert(&buffers, { piece }, offset);
+        }
+        //FIXME (ratchetfreak): release tree
     }
 
     void Tree::internal_remove(CharOffset offset, Length count)
@@ -1531,7 +1836,10 @@ namespace RatchetPieceTree
             satisfies_btree_invariant(root);
 #endif
         } };
-        root = root.remove(offset, count, &buffers);
+        
+        StorageTree old_tree = root;
+        root = root.remove(&buffers, offset, count);
+        //FIXME (ratchetfreak): release tree
     }
 
     // Fetches the length of the piece starting from the first line to 'index' or to the end of
@@ -1542,20 +1850,20 @@ namespace RatchetPieceTree
         auto& line_starts = buffer->line_starts;
         // Extend it so we can capture the entire line content including newline.
         auto expected_start = extend(piece.first.line, rep(index) + 1);
-        auto first = rep(line_starts[rep(piece.first.line)]) + rep(piece.first.column);
+        auto first = rep(line_starts.starts[rep(piece.first.line)]) + rep(piece.first.column);
         if (expected_start > piece.last.line)
         {
-            auto last = rep(line_starts[rep(piece.last.line)]) + rep(piece.last.column);
+            auto last = rep(line_starts.starts[rep(piece.last.line)]) + rep(piece.last.column);
             if (last == first)
                 return Length{ };
-            if (buffer->buffer[last - 1] == '\n')
+            if (buffer->buffer.str[last - 1] == '\n')
                 return Length{ last - 1 - first };
             return Length{ last - first };
         }
-        auto last = rep(line_starts[rep(expected_start)]);
+        auto last = rep(line_starts.starts[rep(expected_start)]);
         if (last == first)
             return Length{ };
-        if (buffer->buffer[last - 1] == '\n')
+        if (buffer->buffer.str[last - 1] == '\n')
             return Length{ last - 1 - first };
         return Length{ last - first };
     }
@@ -1568,11 +1876,12 @@ namespace RatchetPieceTree
         assert(line != Line::IndexBeginning);
         auto line_index = rep(retract(line));
 
-        const StorageTree::Node* n = node.root_ptr();
+        StorageTree::NodePtr n = node.root_ptr();
         
         while(!n->isLeaf())
         {
-            const StorageTree::ChildArray& children = std::get<StorageTree::ChildArray>(n->children);
+            StorageTree::InternalNodePtr in = reinterpret_cast<StorageTree::InternalNodePtr>(n);
+            StorageTree::NodeVector children = (in->children);
             int i;
             for(i = 0; i < n->childCount;i++)
             {
@@ -1583,7 +1892,7 @@ namespace RatchetPieceTree
                         line_index -= rep(n->lineFeeds[i-1]);
                         *offset = *offset + (n->offsets[i-1]);
                     }
-                    n = children[i].get();
+                    n = children[i];
                     i=0;
                     break;
                 }
@@ -1596,10 +1905,12 @@ namespace RatchetPieceTree
                 line_index -= rep(n->lineFeeds[i-1]);
                 *offset = *offset + (n->offsets[i-1]);
 
-                n = children[i].get();
+                n = children[i];
             }
         }
-        const StorageTree::LeafArray& children = std::get<StorageTree::LeafArray>(n->children);
+        StorageTree::LeafNodePtr ln = reinterpret_cast<StorageTree::LeafNodePtr>(n);
+            
+        NodeData* children = (&ln->children[0]);
         int i;
         for(i = 0; i < n->childCount;i++)
         {
@@ -1631,49 +1942,153 @@ namespace RatchetPieceTree
         auto& line_starts = buffer->line_starts;
         // Extend it so we can capture the entire line content including newline.
         auto expected_start = extend(piece.first.line, rep(index) + 1);
-        auto first = rep(line_starts[rep(piece.first.line)]) + rep(piece.first.column);
+        auto first = rep(line_starts.starts[rep(piece.first.line)]) + rep(piece.first.column);
         if (expected_start > piece.last.line)
         {
-            auto last = rep(line_starts[rep(piece.last.line)]) + rep(piece.last.column);
+            auto last = rep(line_starts.starts[rep(piece.last.line)]) + rep(piece.last.column);
             return Length{ last - first };
         }
-        auto last = rep(line_starts[rep(expected_start)]);
+        auto last = rep(line_starts.starts[rep(expected_start)]);
         return Length{ last - first };
     }
 
-    OwningSnapshot::OwningSnapshot(const Tree* tree):
-        root{ tree->root },
-        meta{ tree->meta },
-        buffers{ tree->buffers } { }
 
-    OwningSnapshot::OwningSnapshot(const Tree* tree, const StorageTree& dt):
+    namespace
+    {
+        void tree_builder_push_immut_buf_node(Arena::Arena* arena, TreeBuilder* builder, String8 txt)
+        {
+            ImmutableBufferNode* node = Arena::push_array<ImmutableBufferNode>(arena, 1);
+            String8 persisted_txt = str8_copy(builder->immutable_buf_arena, txt);
+            LineStarts starts{};
+            populate_line_starts(builder->immutable_buf_arena, &starts, txt);
+            node->buffer = CharBuffer{ .buffer = persisted_txt, .line_starts = starts };
+            SLLQueuePush(builder->buffers.first, builder->buffers.last, node);
+            ++builder->buffers.count;
+        }
+    } // namespace [anon]
+
+    TreeBuilder tree_builder_start(Arena::Arena* buffer_arena)
+    {
+        Arena::Arena** buffer_arenas = Arena::push_array<Arena::Arena*>(buffer_arena, 4);
+        buffer_arenas[0] = buffer_arena;
+        buffer_arenas[1] = Arena::alloc(Arena::default_params);
+        buffer_arenas[2] = Arena::alloc(Arena::default_params);
+        buffer_arenas[3] = Arena::alloc(Arena::default_params);
+        TreeBuilder result{
+            .immutable_buf_arena = buffer_arenas[0],
+            .undo_redo_stack_arena = buffer_arenas[1],
+            .mut_buf_starts_arena = buffer_arenas[2],
+            .mut_buf_arena = buffer_arenas[3],
+            .buffers = {},
+        };
+        return result;
+    }
+
+    void tree_builder_accept(Arena::Arena* arena, TreeBuilder* builder, String8 txt)
+    {
+        tree_builder_push_immut_buf_node(arena, builder, txt);
+    }
+
+    Tree* tree_builder_finish(TreeBuilder* builder)
+    {
+        // We're going to join the list and construct the basic buffer object.
+        ImmutableBufferArray immut_buffers{};
+        CharBuffer* buffers_arr = Arena::push_array<CharBuffer>(builder->immutable_buf_arena, builder->buffers.count);
+        uint64_t i = 0;
+        for EachNode(n, builder->buffers.first)
+        {
+            buffers_arr[i++] = n->buffer;
+        }
+        immut_buffers.buffers = buffers_arr;
+        immut_buffers.count = builder->buffers.count;
+        // Allocate the atomic count.
+        immut_buffers.ref_count = Arena::push_array<uint64_t>(builder->immutable_buf_arena, 1);
+
+        // Allocate the red-black tree block.
+        BTreeBlock* rb_tree_blk = Arena::push_array<BTreeBlock>(builder->immutable_buf_arena, 1);
+        rb_tree_blk->free_list.leaf.head = nil_node();
+        rb_tree_blk->free_list.internal.head = nil_node();
+        rb_tree_blk->alloc_arena = builder->immutable_buf_arena;
+
+        BufferCollection buffers{
+            .immutable_buf_arena = builder->immutable_buf_arena,
+            .undo_redo_stack_arena = builder->undo_redo_stack_arena,
+            .mut_buf_starts_arena = builder->mut_buf_starts_arena,
+            .mut_buf_arena = builder->mut_buf_arena,
+            .orig_buffers = immut_buffers,
+            .mod_buffer = {},
+            .rb_tree_blk = rb_tree_blk,
+        };
+        // Allocate the base of the mod buffer.
+        // Note: Because we're wanting to build an endlessly growing array, we need to allocate the buffer ourselves and aligned
+        // to 1 byte.
+        // Note: We give the mod buffer string a +1 for the null.
+        buffers.mod_buffer.buffer.str = Arena::push_array_no_zero_aligned<char>(buffers.mut_buf_arena, 1, Arena::Alignment{ alignof(char) });
+        buffers.mod_buffer.buffer.str[0] = 0;
+        buffers.mod_buffer.line_starts.starts = Arena::push_array<LineStart>(buffers.mut_buf_starts_arena, 0);
+        uint8_t* blob = Arena::push_array_aligned<uint8_t>(buffers.immutable_buf_arena, sizeof(Tree), Arena::Alignment{ alignof(Tree) });
+        Tree* tree = new (blob) Tree{ buffers };
+        return tree;
+    }
+
+    Tree* tree_builder_empty(Arena::Arena* buffer_arena)
+    {
+        Arena::Arena** buffer_arenas = Arena::push_array<Arena::Arena*>(buffer_arena, 4);
+        buffer_arenas[0] = buffer_arena;
+        buffer_arenas[1] = Arena::alloc(Arena::default_params);
+        buffer_arenas[2] = Arena::alloc(Arena::default_params);
+        buffer_arenas[3] = Arena::alloc(Arena::default_params);
+        TreeBuilder result{
+            .immutable_buf_arena = buffer_arenas[0],
+            .undo_redo_stack_arena = buffer_arenas[1],
+            .mut_buf_starts_arena = buffer_arenas[2],
+            .mut_buf_arena = buffer_arenas[3],
+            .buffers = {},
+        };
+        return tree_builder_finish(&result);
+    }
+
+    void release_tree(Tree* tree)
+    {
+        BufferCollection buffers = tree->buffer_collection_no_ref();
+        tree->~Tree();
+        // This might also clear the arena.
+        dec_buffer_ref(&buffers);
+    }
+
+
+    OwningSnapshot::OwningSnapshot(Arena::Arena* mut_buf_arena, const Tree* tree):
         root{ tree->root },
         meta{ tree->meta },
-        buffers{ tree->buffers }
+        buffers{ tree->buffers } 
     {
+        // Copy the mut buf and place it in the buffers.  Since deletion only erases the
+        // arenas, we can overwrite the mut buf and its line endings.
+        LineStarts starts{};
+        starts.count = buffers.mod_buffer.line_starts.count;
+        starts.starts = Arena::push_array_no_zero<LineStart>(mut_buf_arena, starts.count);
+        memcpy(starts.starts, buffers.mod_buffer.line_starts.starts, sizeof(LineStart) * starts.count);
+        String8 buf = str8_copy(mut_buf_arena, buffers.mod_buffer.buffer);
+        buffers.mod_buffer.line_starts = starts;
+        buffers.mod_buffer.buffer = buf;
+    }
+
+    OwningSnapshot::OwningSnapshot(Arena::Arena* mut_buf_arena, const Tree* tree, const StorageTree& dt):
+        OwningSnapshot{ mut_buf_arena, tree }
+    {
+        root = dt.dup();
         // Compute the buffer meta for 'dt'.
         compute_buffer_meta(&meta, dt);
     }
 
 
-    void OwningSnapshot::get_line_content(std::string* buf, Line line) const
+    String8 OwningSnapshot::get_line_content(Arena::Arena* arena, Line line) const
     {
-        // Reset the buffer.
-        buf->clear();
+        String8 result = str8_empty;
         if (line == Line::IndexBeginning)
-            return;
-        if (root.is_empty())
-            return;
-        CharOffset line_offset{ };
-        Tree::line_start<&Tree::accumulate_value>(&line_offset, &buffers, root, line);
-        TreeWalker walker{ this, line_offset };
-        while (not walker.exhausted())
-        {
-            char c = walker.next();
-            if (c == '\n')
-                break;
-            buf->push_back(c);
-        }
+            return result;
+        result = Tree::assemble_line(arena, &buffers, meta, root, line);
+        return result;
     }
     
     Line OwningSnapshot::line_at(CharOffset offset) const
@@ -1695,7 +2110,7 @@ namespace RatchetPieceTree
     {
         LineRange range{ };
         Tree::line_start<&Tree::accumulate_value>(&range.first, &buffers, root, line);
-        Tree::line_end_crlf(&range.last, &buffers, *root.root_ptr(), extend(line));
+        Tree::line_end_crlf(&range.last, &buffers, root.root_ptr(), extend(line));
         return range;
     }
 
@@ -1722,66 +2137,70 @@ namespace RatchetPieceTree
         compute_buffer_meta(&meta, dt);
     }
 
-    void ReferenceSnapshot::get_line_content(std::string* buf, Line line) const
+    String8 ReferenceSnapshot::get_line_content(Arena::Arena* arena, Line line) const
     {
-        // Reset the buffer.
-        buf->clear();
+        String8 result = str8_empty;
         if (line == Line::IndexBeginning)
-            return;
-        if (root.is_empty())
-            return;
-        CharOffset line_offset{ };
-        Tree::line_start<&Tree::accumulate_value>(&line_offset, buffers, root, line);
-        TreeWalker walker{ this, line_offset };
-        while (not walker.exhausted())
-        {
-            char c = walker.next();
-            if (c == '\n')
-                break;
-            buf->push_back(c);
-        }
+            return result;
+        result = Tree::assemble_line(arena, buffers, meta, root, line);
+        return result;
     }
     
     namespace
     {
         template <typename TreeT>
-        [[nodiscard]] IncompleteCRLF trim_crlf(std::string* buf, TreeT* tree, CharOffset line_offset)
+        [[nodiscard]] IncompleteCRLF trim_crlf(Arena::Arena* arena, String8* buf, TreeT* tree, CharOffset line_offset)
         {
-            TreeWalker walker{ tree, line_offset };
-            auto prev_char = '\0';
+            auto scratch = Arena::scratch_begin({ &arena, 1 });
+            IncompleteCRLF result = IncompleteCRLF::No;
+            TreeWalker walker{ scratch.arena, tree, line_offset };
+            String8List serial_lst{};
+            str8_serial_begin(scratch.arena, &serial_lst);
+            String8 prev_str = str8_empty;
+            char prev_char = 0;
+            char c = 0;
             while (not walker.exhausted())
             {
-                char c = walker.next();
+                c = walker.next();
                 if (c == '\n')
                 {
                     if (prev_char == '\r')
                     {
-                        buf->pop_back();
-                        return IncompleteCRLF::No;
+                        result = IncompleteCRLF::No;
+                        break;
                     }
-                    return IncompleteCRLF::Yes;
+                    result = IncompleteCRLF::Yes;
+                    break;
                 }
-                buf->push_back(c);
+                str8_serial_push_str8(scratch.arena, &serial_lst, prev_str);
                 prev_char = c;
+                prev_str = str8(&prev_char, 1);
+            }
+            // If the prev_char was anything other than a '\r', we want to add it to the buffer.  This does not,
+            // however, imply that CRLF endings are incomplete.  This might simply the the last line of the buffer.
+            // Note: The prev_char will only be valid if the string was also set.
+            if (prev_str.size != 0 and prev_char != '\r')
+            {
+                str8_serial_push_char(scratch.arena, &serial_lst, prev_char);
             }
             // End of the buffer is not an incomplete CRLF.
-            return IncompleteCRLF::No;
+            *buf = str8_serial_end(arena, serial_lst);
+            Arena::scratch_end(scratch);
+            return result;
         }
     } // namespace [anon]
 
-    IncompleteCRLF Tree::get_line_content_crlf(std::string* buf, Line line) const
+    IncompleteCRLF Tree::get_line_content_crlf(Arena::Arena* arena, String8* buf, Line line) const
     {
-        // Reset the buffer.
-        buf->clear();
+        *buf = str8_empty;
         if (line == Line::IndexBeginning)
             return IncompleteCRLF::No;
-        auto node = root;
-        if (node.is_empty())
+        if (root.is_empty())
             return IncompleteCRLF::No;
         // Trying this new logic for now.
         CharOffset line_offset{ };
-        line_start<&Tree::accumulate_value>(&line_offset, &buffers, node, line);
-        return trim_crlf(buf, this, line_offset);
+        line_start<&Tree::accumulate_value>(&line_offset, &buffers, root, line);
+        return trim_crlf(arena, buf, this, line_offset);
     }
     
     Line ReferenceSnapshot::line_at(CharOffset offset) const
@@ -1803,7 +2222,7 @@ namespace RatchetPieceTree
     {
         LineRange range{ };
         Tree::line_start<&Tree::accumulate_value>(&range.first, buffers, root, line);
-        Tree::line_end_crlf(&range.last, buffers, *root.root_ptr(), extend(line));
+        Tree::line_end_crlf(&range.last, buffers, root.root_ptr(), extend(line));
         return range;
     }
 
@@ -1815,39 +2234,39 @@ namespace RatchetPieceTree
         return range;
     }
 
-    void TreeBuilder::accept(std::string_view txt)
-    {
-        populate_line_starts(&scratch_starts, txt);
-        buffers.push_back(std::make_shared<CharBuffer>(std::string{ txt }, scratch_starts));
-    }
-
-    TreeWalker::TreeWalker(const Tree* tree, CharOffset offset):
+    TreeWalker::TreeWalker(Arena::Arena* arena, const Tree* tree, CharOffset offset):
         buffers{ &tree->buffers },
         root{ tree->root },
         meta{ tree->meta },
-        stack{ { root.root_ptr() } },
+        stack{ nullptr },
+        stackCount{ 1 },
         total_offset{ offset }
     {
+        stack = Arena::push_array<StackEntry>(arena, root.depth());
         fast_forward_to(offset);
     }
 
-    TreeWalker::TreeWalker(const OwningSnapshot* snap, CharOffset offset):
+    TreeWalker::TreeWalker(Arena::Arena* arena, const OwningSnapshot* snap, CharOffset offset):
         buffers{ &snap->buffers },
         root{ snap->root },
         meta{ snap->meta },
-        stack{ { root.root_ptr() } },
+        stack{ nullptr },
+        stackCount{ 1 },
         total_offset{ offset }
     {
+        stack = Arena::push_array<StackEntry>(arena, root.depth());
         fast_forward_to(offset);
     }
 
-    TreeWalker::TreeWalker(const ReferenceSnapshot* snap, CharOffset offset):
+    TreeWalker::TreeWalker(Arena::Arena* arena, const ReferenceSnapshot* snap, CharOffset offset):
         buffers{ snap->buffers },
         root{ snap->root },
         meta{ snap->meta },
-        stack{ { root.root_ptr() } },
+        stack{ nullptr },
+        stackCount{ 1 },
         total_offset{ offset }
     {
+        stack = Arena::push_array<StackEntry>(arena, root.depth());
         fast_forward_to(offset);
     }
 
@@ -1883,7 +2302,7 @@ namespace RatchetPieceTree
 
     bool TreeWalker::exhausted() const
     {
-        if (stack.empty())
+        if (stackCount==0)
             return true;
         // If we have not exhausted the pointers, we're still active.
         if (first_ptr != last_ptr)
@@ -1891,7 +2310,7 @@ namespace RatchetPieceTree
         // If there's more than one entry on the stack, we're still active.
         //if (stack.size() > 1)
         //    return false;
-        for(int i =0; i < stack.size(); i++)
+        for(int i = 0; i < stackCount; i++)
         {
             auto index = stack[i].index;
             auto childCount = stack[i].node->childCount;
@@ -1904,29 +2323,30 @@ namespace RatchetPieceTree
 
     void TreeWalker::seek(CharOffset offset)
     {
-        stack.clear();
+        stackCount = 0;
         if(!root.root_ptr())return;
-        stack.push_back({ root.root_ptr() });
+        stack[stackCount++] = { root.root_ptr() };
         total_offset = offset;
 
         Length accumulated {0};
-        if(rep(offset) >= rep(stack.back().node->subTreeLength()))
+        if(rep(offset) >= rep(stack[stackCount-1].node->subTreeLength()))
         {
-            stack.clear();
+            stackCount = 0;
             return;
         }
-        while(!stack.back().node->isLeaf())
+        while(!stack[stackCount-1].node->isLeaf())
         {
-            algo_mark(stack.back().node->shared_from_this(), Collect);
-            auto &stack_entry = stack.back();
-            const StorageTree::ChildArray& children = std::get<StorageTree::ChildArray>(stack_entry.node->children);
+            algo_mark(stack[stackCount-1].node->shared_from_this(), Collect);
+            auto &stack_entry = stack[stackCount-1];
+            StorageTree::InternalNodePtr in = reinterpret_cast<StorageTree::InternalNodePtr>(stack_entry.node);
+            StorageTree::NodeVector children = (&in->children[0]);
             Length sublen {0};
             for(stack_entry.index = 0; stack_entry.index< stack_entry.node->childCount; stack_entry.index++)
             {
                 auto subtreelen = stack_entry.node->offsets[stack_entry.index];
                 if(rep(offset) < rep(subtreelen)+ rep(accumulated))
                 {
-                    stack.push_back({children[stack_entry.index++].get()});
+                    stack[stackCount++] = {children[stack_entry.index++]};
                     accumulated = accumulated + sublen;
                     break;
                 }
@@ -1934,12 +2354,13 @@ namespace RatchetPieceTree
                 sublen = subtreelen;
             }
         }
-        const StorageTree::LeafArray& children = std::get<StorageTree::LeafArray>(stack.back().node->children);
-        algo_mark(stack.back().node->shared_from_this(), Collect);
+        StorageTree::LeafNodePtr ln = reinterpret_cast<StorageTree::LeafNodePtr>(stack[stackCount-1].node);
+        NodeData* children = (&ln->children[0]);
+        algo_mark(stack[stackCount-1].node->shared_from_this(), Collect);
         Length sublen {0};
-        for(stack.back().index = 0; stack.back().index< stack.back().node->childCount;stack.back().index++)
+        for(stack[stackCount-1].index = 0; stack[stackCount-1].index< stack[stackCount-1].node->childCount;stack[stackCount-1].index++)
         {
-            auto subtreelen = stack.back().node->offsets[stack.back().index];
+            auto subtreelen = stack[stackCount-1].node->offsets[stack[stackCount-1].index];
             if(rep(offset) < rep(subtreelen) + rep(accumulated))
             {
                 accumulated = accumulated + sublen;
@@ -1947,19 +2368,19 @@ namespace RatchetPieceTree
             }
             sublen = subtreelen;
         }
-        if(stack.back().index== stack.back().node->childCount)
+        if(stack[stackCount-1].index== stack[stackCount-1].node->childCount)
         {
-            stack.clear();
+            stackCount = 0;
             first_ptr=nullptr;
             last_ptr=nullptr;
             return;
         }
-        auto& piece = children[stack.back().index++].piece;
+        auto& piece = children[stack[stackCount-1].index++].piece;
         auto* buffer = buffers->buffer_at(piece.index);
         auto first_offset = buffers->buffer_offset(piece.index, piece.first);
         auto last_offset = buffers->buffer_offset(piece.index, piece.last);
-        first_ptr = buffer->buffer.data() + rep(first_offset) + rep(offset) - rep(accumulated);
-        last_ptr = buffer->buffer.data() + rep(last_offset);
+        first_ptr = buffer->buffer.str + rep(first_offset) + rep(offset) - rep(accumulated);
+        last_ptr = buffer->buffer.str + rep(last_offset);
     }
 
     void TreeWalker::fast_forward_to(CharOffset offset)
@@ -1971,27 +2392,30 @@ namespace RatchetPieceTree
     {
         if (exhausted())
             return;
-        while (stack.back().node->childCount == stack.back().index)
+        while (stack[stackCount-1].node->childCount == stack[stackCount-1].index)
         {
-            stack.pop_back();
-            if(stack.empty())return;
+            stackCount--;
+            if(stackCount == 0)return;
         }
-        while(!stack.back().node->isLeaf())
+        while(!stack[stackCount-1].node->isLeaf())
         {
-            algo_mark(stack.back().node->shared_from_this(), Traverse);
-            const StorageTree::ChildArray& children = std::get<StorageTree::ChildArray>(stack.back().node->children);
-            size_t childIndex = stack.back().index++;
-            stack.push_back({children[childIndex].get(), 0});
+            algo_mark(stack[stackCount-1].node->shared_from_this(), Traverse);
+            
+            StorageTree::InternalNodePtr in = reinterpret_cast<StorageTree::InternalNodePtr>(stack[stackCount-1].node);
+            StorageTree::NodeVector children = (&in->children[0]);
+            size_t childIndex = stack[stackCount-1].index++;
+            stack[stackCount++] = {children[childIndex], 0};
         }
-        algo_mark(stack.back().node->shared_from_this(), Traverse);
-        const StorageTree::LeafArray& leafs = std::get<StorageTree::LeafArray>(stack.back().node->children);
-
-        auto& piece = leafs[stack.back().index++].piece;
+        algo_mark(stack[stackCount-1].node->shared_from_this(), Traverse);
+        StorageTree::LeafNodePtr ln = reinterpret_cast<StorageTree::LeafNodePtr>(stack[stackCount-1].node);
+        NodeData* leafs = (&ln->children[0]);
+        
+        auto& piece = leafs[stack[stackCount-1].index++].piece;
         auto* buffer = buffers->buffer_at(piece.index);
         auto first_offset = buffers->buffer_offset(piece.index, piece.first);
         auto last_offset = buffers->buffer_offset(piece.index, piece.last);
-        first_ptr = buffer->buffer.data() + rep(first_offset);
-        last_ptr = buffer->buffer.data() + rep(last_offset);
+        first_ptr = buffer->buffer.str + rep(first_offset);
+        last_ptr = buffer->buffer.str + rep(last_offset);
     }
 
     Length TreeWalker::remaining() const
@@ -1999,33 +2423,39 @@ namespace RatchetPieceTree
         return meta.total_content_length - distance(CharOffset{}, total_offset);
     }
 
-    ReverseTreeWalker::ReverseTreeWalker(const Tree* tree, CharOffset offset):
+    ReverseTreeWalker::ReverseTreeWalker(Arena::Arena* arena, const Tree* tree, CharOffset offset):
         buffers{ &tree->buffers },
         root{ tree->root },
         meta{ tree->meta },
-        stack{ { root.root_ptr()} },
+        stack{ nullptr },
+        stackCount{ 1 },
         total_offset{ offset }
     {
+        stack = Arena::push_array<StackEntry>(arena, root.depth());
         fast_forward_to(offset);
     }
 
-    ReverseTreeWalker::ReverseTreeWalker(const OwningSnapshot* snap, CharOffset offset):
+    ReverseTreeWalker::ReverseTreeWalker(Arena::Arena* arena, const OwningSnapshot* snap, CharOffset offset):
         buffers{ &snap->buffers },
         root{ snap->root },
         meta{ snap->meta },
-        stack{ { root.root_ptr() } },
+        stack{ nullptr },
+        stackCount{ 1 },
         total_offset{ offset }
     {
+        stack = Arena::push_array<StackEntry>(arena, root.depth());
         fast_forward_to(offset);
     }
 
-    ReverseTreeWalker::ReverseTreeWalker(const ReferenceSnapshot* snap, CharOffset offset):
+    ReverseTreeWalker::ReverseTreeWalker(Arena::Arena* arena, const ReferenceSnapshot* snap, CharOffset offset):
         buffers{ snap->buffers },
         root{ snap->root },
         meta{ snap->meta },
-        stack{ { root.root_ptr() } },
+        stack{ nullptr },
+        stackCount{ 1 },
         total_offset{ offset }
     {
+        stack = Arena::push_array<StackEntry>(arena, root.depth());
         fast_forward_to(offset);
     }
     char ReverseTreeWalker::next()
@@ -2071,13 +2501,13 @@ namespace RatchetPieceTree
 
     bool ReverseTreeWalker::exhausted() const
     {
-        if (stack.empty())
+        if (stackCount == 0)
             return true;
         // If we have not exhausted the pointers, we're still active.
         if (first_ptr != last_ptr)
             return false;
         // If there's more than one entry on the stack, we're still active.
-        for(int i =0; i < stack.size(); i++)
+        for(int i =0; i < stackCount; i++)
         {
             auto index = stack[i].index;
             auto childCount = stack[i].node->childCount;
@@ -2091,27 +2521,29 @@ namespace RatchetPieceTree
     {
         if (exhausted())
             return;
-        while (stack.back().node->childCount == stack.back().index)
+        while (stack[stackCount-1].node->childCount == stack[stackCount-1].index)
         {
-            stack.pop_back();
-            if(stack.empty())return;
+            stackCount--;
+            if(stackCount == 0)return;
         }
-        while(!stack.back().node->isLeaf())
+        while(!stack[stackCount-1].node->isLeaf())
         {
-            const StorageTree::ChildArray& children = std::get<StorageTree::ChildArray>(stack.back().node->children);
-            stack.back().index++;
-            stack.push_back({children[stack.back().node->childCount - stack.back().index].get(), 0});
+            StorageTree::InternalNodePtr in = reinterpret_cast<StorageTree::InternalNodePtr>(stack[stackCount-1].node);
+            StorageTree::NodeVector children = (&in->children[0]);
+            stack[stackCount-1].index++;
+            stack[stackCount++]={children[stack[stackCount].node->childCount - stack[stackCount].index], 0};
         }
 
-        const StorageTree::LeafArray& leafs = std::get<StorageTree::LeafArray>(stack.back().node->children);
+        StorageTree::LeafNodePtr ln = reinterpret_cast<StorageTree::LeafNodePtr>(stack[stackCount].node);
+        NodeData* leafs = (&ln->children[0]);
 
-        stack.back().index++;
-        auto& piece = leafs[stack.back().node->childCount - stack.back().index].piece;
+        stack[stackCount-1].index++;
+        auto& piece = leafs[stack[stackCount-1].node->childCount - stack[stackCount-1].index].piece;
         auto* buffer = buffers->buffer_at(piece.index);
         auto first_offset = buffers->buffer_offset(piece.index, piece.first);
         auto last_offset = buffers->buffer_offset(piece.index, piece.last);
-        last_ptr = buffer->buffer.data() + rep(first_offset);
-        first_ptr = buffer->buffer.data() + rep(last_offset);
+        last_ptr = buffer->buffer.str + rep(first_offset);
+        first_ptr = buffer->buffer.str + rep(last_offset);
 
 
     }
@@ -2124,18 +2556,19 @@ namespace RatchetPieceTree
 
     void ReverseTreeWalker::seek(CharOffset offset)
     {
-        stack.clear();
+        stackCount = 0;
         if(!root.root_ptr())return;
-        stack.push_back({ root.root_ptr() });
+        stack[stackCount++] = { root.root_ptr() };
         total_offset = offset;
 
         Length accumulated {0};
 
-        while(!stack.back().node->isLeaf())
+        while(!stack[stackCount-1].node->isLeaf())
         {
-            algo_mark(stack.back().node->shared_from_this(), Collect);
-            auto &stack_entry = stack.back();
-            const StorageTree::ChildArray& children = std::get<StorageTree::ChildArray>(stack_entry.node->children);
+            algo_mark(stack[stackCount-1].node->shared_from_this(), Collect);
+            auto &stack_entry = stack[stackCount-1];
+            StorageTree::InternalNodePtr in = reinterpret_cast<StorageTree::InternalNodePtr>(stack_entry.node);
+            StorageTree::NodeVector children = (&in->children[0]);
             Length sublen {0};
             for(stack_entry.index = 0; stack_entry.index< stack_entry.node->childCount; stack_entry.index++)
             {
@@ -2144,7 +2577,7 @@ namespace RatchetPieceTree
                 {
                     auto index = stack_entry.index++;
                     stack_entry.index = stack_entry.node->childCount - index;
-                    stack.push_back({children[index].get()});
+                    stack[stackCount++] = {children[index]};
                     accumulated = accumulated + sublen;
                     break;
                 }
@@ -2152,11 +2585,12 @@ namespace RatchetPieceTree
                 sublen = subtreelen;
             }
         }
-        const StorageTree::LeafArray& children = std::get<StorageTree::LeafArray>(stack.back().node->children);
-        algo_mark(stack.back().node->shared_from_this(), Collect);
-        for(stack.back().index = 0; stack.back().index< stack.back().node->childCount;stack.back().index++)
+        StorageTree::LeafNodePtr ln = reinterpret_cast<StorageTree::LeafNodePtr>(stack[stackCount-1].node);
+        NodeData* children = (&ln->children[0]);
+        algo_mark(stack[stackCount-1].node->shared_from_this(), Collect);
+        for(stack[stackCount-1].index = 0; stack[stackCount-1].index< stack[stackCount-1].node->childCount;stack[stackCount-1].index++)
         {
-            auto subtreelen = children[stack.back().index].piece.length;
+            auto subtreelen = children[stack[stackCount-1].index].piece.length;
             if(rep(offset) < rep(subtreelen) + rep(accumulated))
             {
                 break;
@@ -2164,41 +2598,46 @@ namespace RatchetPieceTree
             accumulated = accumulated + subtreelen;
         }
 
-        auto& piece = children[stack.back().index++].piece;
-        stack.back().index = stack.back().node->childCount - stack.back().index+1;
+        auto& piece = children[stack[stackCount-1].index++].piece;
+        stack[stackCount-1].index = stack[stackCount-1].node->childCount - stack[stackCount-1].index+1;
         auto* buffer = buffers->buffer_at(piece.index);
         auto first_offset = buffers->buffer_offset(piece.index, piece.first);
         //auto last_offset = buffers->buffer_offset(piece.index, piece.last);
-        first_ptr  = buffer->buffer.data() + rep(first_offset) + rep(offset)- rep(accumulated) +1;
-        last_ptr = buffer->buffer.data() + rep(first_offset);
+        first_ptr  = buffer->buffer.str + rep(first_offset) + rep(offset)- rep(accumulated) +1;
+        last_ptr = buffer->buffer.str + rep(first_offset);
     }
 }
 
-void print_tree(const RatchetPieceTree::StorageTree::Node& root, const RatchetPieceTree::Tree* tree, int level , size_t node_offset )
+
+template<size_t MaxChildren>
+void print_tree(RatchetPieceTree::BNodeCountedGeneric<MaxChildren>* root, const RatchetPieceTree::Tree* tree, int level, size_t node_offset)
 {
 
     const char* levels = "|||||||||||||||||||||||||||||||";
     //auto this_offset = node_offset;
-    printf("%.*sme: %p, numch: %zd leaf: %s\n",level, levels, &root, root.childCount, root.isLeaf()?"yes":"no");
+    printf("%.*sme: %p, numch: %zd leaf: %s\n",level, levels, root, root->childCount, root->isLeaf()?"yes":"no");
     //printf("%.*s  :\n",level, levels);
-    if(root.isLeaf()){
-        for(int i = 0; i < root.childCount;i++){
-            print_piece(std::get<RatchetPieceTree::StorageTree::LeafArray>(root.children)[i].piece, tree, level+1);
+    if(root->isLeaf()){
+        for(int i = 0; i < root->childCount;i++){
+            RatchetPieceTree::StorageTree::LeafNodePtr ln = reinterpret_cast<RatchetPieceTree::StorageTree::LeafNodePtr>(root);
+            print_piece(ln->children[i].piece, tree, level+1);
         }
     }
     else
     {
-        for(int i = 0; i < root.childCount;i++){
-             RatchetPieceTree::StorageTree::NodePtr childptr = std::get<RatchetPieceTree::StorageTree::ChildArray>(root.children)[i];
-            RatchetPieceTree::Length sublen = root.offsets[i];
-            printf("%p, %d,", childptr.get(), (int)rep(sublen));
+        RatchetPieceTree::StorageTree::InternalNodePtr in = reinterpret_cast<RatchetPieceTree::StorageTree::InternalNodePtr>(root);
+            
+        for(int i = 0; i < root->childCount;i++){
+             RatchetPieceTree::StorageTree::NodePtr childptr = (in->children)[i];
+            RatchetPieceTree::Length sublen = root->offsets[i];
+            printf("%p, %d,", childptr, (int)rep(sublen));
         }
         printf("\n");
-        for(int i = 0; i < root.childCount;i++){
-             RatchetPieceTree::StorageTree::NodePtr childptr = std::get<RatchetPieceTree::StorageTree::ChildArray>(root.children)[i];
+        for(int i = 0; i < root->childCount;i++){
+             RatchetPieceTree::StorageTree::NodePtr childptr = (in->children)[i];
 
-            RatchetPieceTree::Length sublen = root.offsets[i];
-            print_tree(*childptr , tree, level + 1, node_offset+rep(sublen));
+            RatchetPieceTree::Length sublen = root->offsets[i];
+            ::print_tree(childptr , tree, level + 1, node_offset+rep(sublen));
         }
     }
     //printf("%.*sleft_len{%zd}, left_lf{%zd}, node_offset{%zd}\n", level, levels, rep(root.root().left_subtree_length), rep(root.root().left_subtree_lf_count), this_offset);
@@ -2206,8 +2645,9 @@ void print_tree(const RatchetPieceTree::StorageTree::Node& root, const RatchetPi
 
 void print_buffer(const RatchetPieceTree::Tree* tree)
 {
+    Arena::Temp scratch = Arena::scratch_begin(Arena::no_conflicts);
     printf("--- Entire Buffer ---\n");
-    RatchetPieceTree::TreeWalker walker{ tree };
+    RatchetPieceTree::TreeWalker walker{ scratch.arena, tree };
     std::string buf;
     while (not walker.exhausted())
     {
@@ -2227,4 +2667,5 @@ void print_buffer(const RatchetPieceTree::Tree* tree)
             printf("| %c", c);
     }
     printf("\n");
+    Arena::scratch_end(scratch);
 }
