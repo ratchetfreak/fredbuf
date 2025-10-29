@@ -126,9 +126,9 @@ void assume_buffer(const PieceTree::Tree* tree, String8View expected, int locus 
 using namespace PieceTree;
 void test1()
 {
-    auto scratch = Arena::scratch_begin(Arena::no_conflicts);
-    TreeBuilder builder = tree_builder_start(scratch.arena);
-    tree_builder_accept(scratch.arena, &builder, str8_mut(str8_literal("A\nB\nC\nD")));
+    Arena::Arena* arena = Arena::alloc(Arena::default_params);
+    TreeBuilder builder = tree_builder_start(arena);
+    tree_builder_accept(arena, &builder, str8_mut(str8_literal("A\nB\nC\nD")));
     Tree* tree = tree_builder_finish(&builder);
     assume_buffer(tree, str8_literal("A\nB\nC\nD"));
 
@@ -139,13 +139,13 @@ void test1()
     assume_buffer(tree, str8_literal("A\nB\nD"));
 
     release_tree(tree);
-    Arena::scratch_end(scratch);
 }
 
 void test2()
 {
     auto scratch = Arena::scratch_begin(Arena::no_conflicts);
-    TreeBuilder builder = tree_builder_start(scratch.arena);
+    Arena::Arena* arena = Arena::alloc(Arena::default_params);
+    TreeBuilder builder = tree_builder_start(arena);
     auto tree = tree_builder_finish(&builder);
     tree->insert(CharOffset{ 0 } + tree->length(), str8_mut(str8_literal("a")));
     tree->insert(CharOffset{ 0 } + tree->length(), str8_mut(str8_literal("s")));
@@ -224,14 +224,15 @@ void test2()
 void test3()
 {
     auto scratch = Arena::scratch_begin(Arena::no_conflicts);
-    TreeBuilder builder = tree_builder_start(scratch.arena);
-    tree_builder_accept(scratch.arena, &builder, str8_mut(str8_literal("Hello")));
-    tree_builder_accept(scratch.arena, &builder, str8_mut(str8_literal(",")));
-    tree_builder_accept(scratch.arena, &builder, str8_mut(str8_literal(" ")));
-    tree_builder_accept(scratch.arena, &builder, str8_mut(str8_literal("World")));
-    tree_builder_accept(scratch.arena, &builder, str8_mut(str8_literal("!")));
-    tree_builder_accept(scratch.arena, &builder, str8_mut(str8_literal("\nThis is a second line.")));
-    tree_builder_accept(scratch.arena, &builder, str8_mut(str8_literal(" Continue...\nANOTHER!")));
+    Arena::Arena* arena = Arena::alloc(Arena::default_params);
+    TreeBuilder builder = tree_builder_start(arena);
+    tree_builder_accept(arena, &builder, str8_mut(str8_literal("Hello")));
+    tree_builder_accept(arena, &builder, str8_mut(str8_literal(",")));
+    tree_builder_accept(arena, &builder, str8_mut(str8_literal(" ")));
+    tree_builder_accept(arena, &builder, str8_mut(str8_literal("World")));
+    tree_builder_accept(arena, &builder, str8_mut(str8_literal("!")));
+    tree_builder_accept(arena, &builder, str8_mut(str8_literal("\nThis is a second line.")));
+    tree_builder_accept(arena, &builder, str8_mut(str8_literal(" Continue...\nANOTHER!")));
 
     Tree* tree = tree_builder_finish(&builder);
 
@@ -367,8 +368,9 @@ void test3()
 void test4()
 {
     auto scratch = Arena::scratch_begin(Arena::no_conflicts);
-    TreeBuilder builder = tree_builder_start(scratch.arena);
-    tree_builder_accept(scratch.arena, &builder, str8_mut(str8_literal("ABCD")));
+    Arena::Arena* arena = Arena::alloc(Arena::default_params);
+    TreeBuilder builder = tree_builder_start(arena);
+    tree_builder_accept(arena, &builder, str8_mut(str8_literal("ABCD")));
     Tree* tree = tree_builder_finish(&builder);
 
     tree->insert(CharOffset{4}, str8_mut(str8_literal("a")));
@@ -386,8 +388,9 @@ void test4()
 void test5()
 {
     auto scratch = Arena::scratch_begin(Arena::no_conflicts);
-    TreeBuilder builder = tree_builder_start(scratch.arena);
-    tree_builder_accept(scratch.arena, &builder, str8_mut(str8_literal("")));
+    Arena::Arena* arena = Arena::alloc(Arena::default_params);
+    TreeBuilder builder = tree_builder_start(arena);
+    tree_builder_accept(arena, &builder, str8_mut(str8_literal("")));
     auto tree = tree_builder_finish(&builder);
 
     tree->insert(CharOffset{ 0 }, str8_mut(str8_literal("a")));
@@ -405,8 +408,9 @@ void test5()
 void test6()
 {
     auto scratch = Arena::scratch_begin(Arena::no_conflicts);
-    TreeBuilder builder = tree_builder_start(scratch.arena);
-    tree_builder_accept(scratch.arena, &builder, str8_mut(str8_literal("Hello, World!")));
+    Arena::Arena* arena = Arena::alloc(Arena::default_params);
+    TreeBuilder builder = tree_builder_start(arena);
+    tree_builder_accept(arena, &builder, str8_mut(str8_literal("Hello, World!")));
     Tree* tree = tree_builder_finish(&builder);
 
     tree->insert(CharOffset{ 0 }, str8_mut(str8_literal("a")));
@@ -473,9 +477,10 @@ void test6()
 void test7()
 {
     auto scratch = Arena::scratch_begin(Arena::no_conflicts);
-    TreeBuilder builder = tree_builder_start(scratch.arena);
-    tree_builder_accept(scratch.arena, &builder, str8_mut(str8_literal("ABC")));
-    tree_builder_accept(scratch.arena, &builder, str8_mut(str8_literal("DEF")));
+    Arena::Arena* arena = Arena::alloc(Arena::default_params);
+    TreeBuilder builder = tree_builder_start(arena);
+    tree_builder_accept(arena, &builder, str8_mut(str8_literal("ABC")));
+    tree_builder_accept(arena, &builder, str8_mut(str8_literal("DEF")));
     Tree* tree = tree_builder_finish(&builder);
 
     tree->insert(CharOffset{ 0 }, str8_mut(str8_literal("foo")));
@@ -503,8 +508,9 @@ void test7()
 void test8()
 {
     auto scratch = Arena::scratch_begin(Arena::no_conflicts);
-    TreeBuilder builder = tree_builder_start(scratch.arena);
-    tree_builder_accept(scratch.arena, &builder, str8_mut(str8_literal("Hello, World!")));
+    Arena::Arena* arena = Arena::alloc(Arena::default_params);
+    TreeBuilder builder = tree_builder_start(arena);
+    tree_builder_accept(arena, &builder, str8_mut(str8_literal("Hello, World!")));
     Tree* tree = tree_builder_finish(&builder);
 
     tree->insert(CharOffset{ 0 }, str8_mut(str8_literal("a")), PieceTree::SuppressHistory::Yes);
@@ -552,47 +558,51 @@ void test8()
 void test9()
 {
     auto scratch = Arena::scratch_begin(Arena::no_conflicts);
-    TreeBuilder builder = tree_builder_start(scratch.arena);
-    tree_builder_accept(scratch.arena, &builder, str8_mut(str8_literal("Hello, World!")));
+    Arena::Arena* arena = Arena::alloc(Arena::default_params);
+    TreeBuilder builder = tree_builder_start(arena);
+    tree_builder_accept(arena, &builder, str8_mut(str8_literal("Hello, World!")));
     Tree* tree = tree_builder_finish(&builder);
 
-    auto initial_commit = tree->head();
+    // Create a scope for initial_commit so it does not escape after the release of the tree.
+    {
+        auto initial_commit = tree->head();
 
-    tree->insert(CharOffset{ 0 }, str8_mut(str8_literal("a")), PieceTree::SuppressHistory::Yes);
-    assume_buffer(tree, str8_literal("aHello, World!"));
+        tree->insert(CharOffset{ 0 }, str8_mut(str8_literal("a")), PieceTree::SuppressHistory::Yes);
+        assume_buffer(tree, str8_literal("aHello, World!"));
 
-    auto r = tree->try_undo(CharOffset{ 0 });
-    assert(not r.success);
+        auto r = tree->try_undo(CharOffset{ 0 });
+        assert(not r.success);
 
-    auto commit = tree->head();
-    tree->snap_to(initial_commit);
-    assume_buffer(tree, str8_literal("Hello, World!"));
+        auto commit = tree->head();
+        tree->snap_to(initial_commit);
+        assume_buffer(tree, str8_literal("Hello, World!"));
 
-    tree->snap_to(commit);
-    assume_buffer(tree, str8_literal("aHello, World!"));
+        tree->snap_to(commit);
+        assume_buffer(tree, str8_literal("aHello, World!"));
 
-    tree->remove(CharOffset{ 0 }, Length{ 8 }, PieceTree::SuppressHistory::Yes);
-    assume_buffer(tree, str8_literal("World!"));
+        tree->remove(CharOffset{ 0 }, Length{ 8 }, PieceTree::SuppressHistory::Yes);
+        assume_buffer(tree, str8_literal("World!"));
 
-    tree->snap_to(commit);
-    assume_buffer(tree, str8_literal("aHello, World!"));
+        tree->snap_to(commit);
+        assume_buffer(tree, str8_literal("aHello, World!"));
 
-    tree->snap_to(initial_commit);
-    assume_buffer(tree, str8_literal("Hello, World!"));
+        tree->snap_to(initial_commit);
+        assume_buffer(tree, str8_literal("Hello, World!"));
 
-    // Create a new branch.
-    tree->insert(CharOffset{ 13 }, str8_mut(str8_literal(" My name is fredbuf.")), PieceTree::SuppressHistory::Yes);
-    assume_buffer(tree, str8_literal("Hello, World! My name is fredbuf."));
+        // Create a new branch.
+        tree->insert(CharOffset{ 13 }, str8_mut(str8_literal(" My name is fredbuf.")), PieceTree::SuppressHistory::Yes);
+        assume_buffer(tree, str8_literal("Hello, World! My name is fredbuf."));
 
-    auto branch = tree->head();
+        auto branch = tree->head();
 
-    // Revert back.
-    tree->snap_to(commit);
-    assume_buffer(tree, str8_literal("aHello, World!"));
+        // Revert back.
+        tree->snap_to(commit);
+        assume_buffer(tree, str8_literal("aHello, World!"));
 
-    // Revert back to branch.
-    tree->snap_to(branch);
-    assume_buffer(tree, str8_literal("Hello, World! My name is fredbuf."));
+        // Revert back to branch.
+        tree->snap_to(branch);
+        assume_buffer(tree, str8_literal("Hello, World! My name is fredbuf."));
+    }
 
     release_tree(tree);
     Arena::scratch_end(scratch);
@@ -659,133 +669,137 @@ into electronic typesetting, remaining essentially unchanged. It was popularised
 passages, and more recently with desktop publishing software like Aldus PageMaker including versions of Lorem Ipsum.)"
     );
     auto scratch = Arena::scratch_begin(Arena::no_conflicts);
-    TreeBuilder builder = tree_builder_start(scratch.arena);
+    Arena::Arena* arena = Arena::alloc(Arena::default_params);
+    TreeBuilder builder = tree_builder_start(arena);
     tree_builder_accept(scratch.arena, &builder, str8_mut(initial_input));
     Tree* tree = tree_builder_finish(&builder);
 
-    auto initial_commit = tree->head();
-
-    constexpr int timing_count = 10;
-    std::chrono::microseconds timing_data[timing_count];
-    // Append-like insertions in the middle.
+    // Do not let initial_commit escape to the release of the tree.
     {
-        for EachIndex(i, timing_count)
-        {
-            tree->snap_to(initial_commit);
-            auto mid = extend(CharOffset{}, (rep(tree->length()) / 2));
-            String8 ins_txt = str8_mut(str8_literal("a"));
-            sw.start();
-            for (int j = 0; j < 100; ++j)
-            {
-                tree->insert(mid, ins_txt, SuppressHistory::Yes);
-                mid = extend(mid);
-            }
-            sw.stop();
-            timing_data[i] = sw.to_us();
-            assume_buffer(tree, inserted_buf_expected);
-        }
-        // Aggregate and display.
-        printf("---------- Append-like insertions ----------\n");
-        int64_t total_count = 0;
-        for EachIndex(i, timing_count)
-        {
-            printf("[%u] = %ldus\n", unsigned(i), long(timing_data[i].count()));
-            total_count += timing_data[i].count();
-        }
-        // Find mean.
-        double mean = static_cast<double>(total_count) / timing_count;
-        printf("Average: %.2fus\n", mean);
-    }
+        auto initial_commit = tree->head();
 
-    // In-place insertions in the middle.
-    {
-        for EachIndex(i, timing_count)
+        constexpr int timing_count = 10;
+        std::chrono::microseconds timing_data[timing_count];
+        // Append-like insertions in the middle.
         {
-            tree->snap_to(initial_commit);
-            auto mid = extend(CharOffset{}, (rep(tree->length()) / 2));
-            String8 ins_txt = str8_mut(str8_literal("a"));
-            sw.start();
-            for (int j = 0; j < 100; ++j)
+            for EachIndex(i, timing_count)
             {
-                // Don't change 'mid' to append to the string.
-                tree->insert(mid, ins_txt, SuppressHistory::Yes);
+                tree->snap_to(initial_commit);
+                auto mid = extend(CharOffset{}, (rep(tree->length()) / 2));
+                String8 ins_txt = str8_mut(str8_literal("a"));
+                sw.start();
+                for (int j = 0; j < 100; ++j)
+                {
+                    tree->insert(mid, ins_txt, SuppressHistory::Yes);
+                    mid = extend(mid);
+                }
+                sw.stop();
+                timing_data[i] = sw.to_us();
+                assume_buffer(tree, inserted_buf_expected);
             }
-            sw.stop();
-            timing_data[i] = sw.to_us();
-            assume_buffer(tree, inserted_buf_expected);
+            // Aggregate and display.
+            printf("---------- Append-like insertions ----------\n");
+            int64_t total_count = 0;
+            for EachIndex(i, timing_count)
+            {
+                printf("[%u] = %ldus\n", unsigned(i), long(timing_data[i].count()));
+                total_count += timing_data[i].count();
+            }
+            // Find mean.
+            double mean = static_cast<double>(total_count) / timing_count;
+            printf("Average: %.2fus\n", mean);
         }
-        // Aggregate and display.
-        printf("---------- In-place insertions ----------\n");
-        int64_t total_count = 0;
-        for EachIndex(i, timing_count)
-        {
-            printf("[%u] = %ldus\n", unsigned(i), long(timing_data[i].count()));
-            total_count += timing_data[i].count();
-        }
-        // Find mean.
-        double mean = static_cast<double>(total_count) / timing_count;
-        printf("Average: %.2fus\n", mean);
-    }
 
-    // Deleting characters to beginning starting at middle.
-    {
-        for EachIndex(i, timing_count)
+        // In-place insertions in the middle.
         {
-            tree->snap_to(initial_commit);
-            auto mid = extend(CharOffset{}, (rep(tree->length()) / 2));
-            sw.start();
-            while (mid != CharOffset::Sentinel)
+            for EachIndex(i, timing_count)
             {
-                // Don't change 'mid' to append to the string.
-                tree->remove(mid, Length{ 1 }, SuppressHistory::Yes);
-                mid = retract(mid);
+                tree->snap_to(initial_commit);
+                auto mid = extend(CharOffset{}, (rep(tree->length()) / 2));
+                String8 ins_txt = str8_mut(str8_literal("a"));
+                sw.start();
+                for (int j = 0; j < 100; ++j)
+                {
+                    // Don't change 'mid' to append to the string.
+                    tree->insert(mid, ins_txt, SuppressHistory::Yes);
+                }
+                sw.stop();
+                timing_data[i] = sw.to_us();
+                assume_buffer(tree, inserted_buf_expected);
             }
-            sw.stop();
-            timing_data[i] = sw.to_us();
-            assume_buffer(tree, upper_half);
+            // Aggregate and display.
+            printf("---------- In-place insertions ----------\n");
+            int64_t total_count = 0;
+            for EachIndex(i, timing_count)
+            {
+                printf("[%u] = %ldus\n", unsigned(i), long(timing_data[i].count()));
+                total_count += timing_data[i].count();
+            }
+            // Find mean.
+            double mean = static_cast<double>(total_count) / timing_count;
+            printf("Average: %.2fus\n", mean);
         }
-        // Aggregate and display.
-        printf("---------- Deletion starting at middle ----------\n");
-        int64_t total_count = 0;
-        for EachIndex(i, timing_count)
-        {
-            printf("[%u] = %ldus\n", unsigned(i), long(timing_data[i].count()));
-            total_count += timing_data[i].count();
-        }
-        // Find mean.
-        double mean = static_cast<double>(total_count) / timing_count;
-        printf("Average: %.2fus\n", mean);
-    }
 
-    // Deleting half the characters starting at beginning.
-    {
-        for EachIndex(i, timing_count)
+        // Deleting characters to beginning starting at middle.
         {
-            tree->snap_to(initial_commit);
-            // This deletion needs to be inclusive of the midpoint (to be consistent with deletion above).
-            auto len_to_del = Length{ (rep(tree->length()) / 2) + 1 };
-            sw.start();
-            while (len_to_del != Length{})
+            for EachIndex(i, timing_count)
             {
-                // Don't change 'mid' to append to the string.
-                tree->remove(CharOffset{}, Length{ 1 }, SuppressHistory::Yes);
-                len_to_del = retract(len_to_del);
+                tree->snap_to(initial_commit);
+                auto mid = extend(CharOffset{}, (rep(tree->length()) / 2));
+                sw.start();
+                while (mid != CharOffset::Sentinel)
+                {
+                    // Don't change 'mid' to append to the string.
+                    tree->remove(mid, Length{ 1 }, SuppressHistory::Yes);
+                    mid = retract(mid);
+                }
+                sw.stop();
+                timing_data[i] = sw.to_us();
+                assume_buffer(tree, upper_half);
             }
-            sw.stop();
-            timing_data[i] = sw.to_us();
-            assume_buffer(tree, upper_half);
+            // Aggregate and display.
+            printf("---------- Deletion starting at middle ----------\n");
+            int64_t total_count = 0;
+            for EachIndex(i, timing_count)
+            {
+                printf("[%u] = %ldus\n", unsigned(i), long(timing_data[i].count()));
+                total_count += timing_data[i].count();
+            }
+            // Find mean.
+            double mean = static_cast<double>(total_count) / timing_count;
+            printf("Average: %.2fus\n", mean);
         }
-        // Aggregate and display.
-        printf("---------- Deletion starting at beginning ----------\n");
-        int64_t total_count = 0;
-        for EachIndex(i, timing_count)
+
+        // Deleting half the characters starting at beginning.
         {
-            printf("[%u] = %ldus\n", unsigned(i), long(timing_data[i].count()));
-            total_count += timing_data[i].count();
+            for EachIndex(i, timing_count)
+            {
+                tree->snap_to(initial_commit);
+                // This deletion needs to be inclusive of the midpoint (to be consistent with deletion above).
+                auto len_to_del = Length{ (rep(tree->length()) / 2) + 1 };
+                sw.start();
+                while (len_to_del != Length{})
+                {
+                    // Don't change 'mid' to append to the string.
+                    tree->remove(CharOffset{}, Length{ 1 }, SuppressHistory::Yes);
+                    len_to_del = retract(len_to_del);
+                }
+                sw.stop();
+                timing_data[i] = sw.to_us();
+                assume_buffer(tree, upper_half);
+            }
+            // Aggregate and display.
+            printf("---------- Deletion starting at beginning ----------\n");
+            int64_t total_count = 0;
+            for EachIndex(i, timing_count)
+            {
+                printf("[%u] = %ldus\n", unsigned(i), long(timing_data[i].count()));
+                total_count += timing_data[i].count();
+            }
+            // Find mean.
+            double mean = static_cast<double>(total_count) / timing_count;
+            printf("Average: %.2fus\n", mean);
         }
-        // Find mean.
-        double mean = static_cast<double>(total_count) / timing_count;
-        printf("Average: %.2fus\n", mean);
     }
 
     release_tree(tree);

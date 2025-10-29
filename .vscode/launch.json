@@ -14,6 +14,17 @@
             "cwd": "${workspaceRoot}",
             "environment": [],
             "externalConsole": false
+        },
+        {
+            "name": "Debug textbuf (linux)",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${workspaceRoot}/fredbuf-test",
+            "args": [],
+            "stopAtEntry": false,
+            "cwd": "${workspaceRoot}",
+            "environment": [],
+            "externalConsole": false
         }
     ]
 }

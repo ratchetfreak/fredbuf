@@ -19,8 +19,8 @@
 #define os_atomic_u128_eval(x, r)              (*(r) = *(x), true)
 #define os_atomic_u128_eval_cond_assign(x,k,c) (*(x) = (k), true)
 #define os_atomic_u64_eval(x)                  (*(x))
-#define os_atomic_u64_inc_eval(x)              (++*(x), true)
-#define os_atomic_u64_dec_eval(x)              (--*(x), true)
+#define os_atomic_u64_inc_eval(x)              (++*(x))
+#define os_atomic_u64_dec_eval(x)              (--*(x))
 
 #define FRED_UNUSED(x) (void)x
 #define FRED_UNUSED_RESULT(x) (void)x
