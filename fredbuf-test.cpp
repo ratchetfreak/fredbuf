@@ -8,15 +8,9 @@
 #include "fred-strings.h"
 
 #define COUNT_ALLOC
-
-
-#if 1
 #include "ratbuf.h"
-#include "ratbuf_btree.cpp"
+#include "ratbuf_btree.h"
 #define PieceTree RatchetPieceTree 
-#else
-#include "fredbuf.cpp"
-#endif
 
 
 // Debug helper from fredbuf.cpp.
@@ -845,6 +839,8 @@ void test10()
     tree_builder_accept(arena, &builder, str8_mut(str8_literal("d!")));
     Tree* tree = tree_builder_finish(&builder);
 
+    (void)tree;
+
 /*
 
     {
@@ -878,11 +874,11 @@ void test10()
         assert(it!=it2);
         ++it2;++it2;
         assert(it==it2);
-    }
+    }*/
     release_tree(tree);
     Arena::scratch_end(scratch);
+}
 
-    */
 
 }
 
@@ -897,11 +893,9 @@ void test11()
         tree_builder_accept(arena, &builder, str8_mut(str8_literal("Hello, World!")));
         
     Tree* tree = tree_builder_finish(&builder);
-    
-    
-    tree.remove(CharOffset{ 14 }, retract(tree.length(),  14*2 ));
-    assume_buffer(&tree, "Hello, World!H!Hello, World!");
 
+    tree->remove(CharOffset{ 14 }, retract(tree->length(),  14*2 ));
+    assume_buffer(tree, str8_literal("Hello, World!H!Hello, World!"));
     release_tree(tree);
     Arena::scratch_end(scratch);
 }
@@ -915,11 +909,14 @@ void test12()
     for(int i = 0; i< 10; i++)
         tree_builder_accept(arena, &builder, str8_mut(str8_literal("Hello, World!")));
         
+    for(int i = 0; i< 10; i++)
+        tree_builder_accept(scratch.arena, &builder, str8_mut(str8_literal("Hello, \rWorld!\r\n")));
+
     Tree* tree = tree_builder_finish(&builder);
     
-    LineRange range = tree.get_line_range(Line(2));
-    LineRange range_crlf = tree.get_line_range_crlf(Line(2));
-    LineRange range_with_newline = tree.get_line_range_with_newline(Line(2));
+    LineRange range = tree->get_line_range(Line(2));
+    LineRange range_crlf = tree->get_line_range_crlf(Line(2));
+    LineRange range_with_newline = tree->get_line_range_with_newline(Line(2));
     printf("range first=%zd, last=%zd\n", range.first, range.last);
     printf("range_crlf first=%zd, last=%zd\n", range_crlf.first, range_crlf.last);
     printf("range_with_newline first=%zd, last=%zd\n", range_with_newline.first, range_with_newline.last);
@@ -943,8 +940,7 @@ void test12()
     
     //printf("first=%zd, last=%zd\n", res.first, res.last);
     //assume_buffer(&tree, "Hello, World!H!Hello, World!");
-    
-    
+
     release_tree(tree);
     Arena::scratch_end(scratch);
 
@@ -1005,5 +1001,13 @@ int main()
 
 #include "arena.cpp"
 #include "fred-strings.cpp"
+
+#if 1
+#include "ratbuf.h"
+#include "ratbuf_btree.cpp"
+#define PieceTree RatchetPieceTree 
+#else
 #include "fredbuf.cpp"
+#endif
+
 #include "os-cstd.cpp"

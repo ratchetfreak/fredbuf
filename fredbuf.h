@@ -105,11 +105,6 @@ namespace PieceTree
     {
         CharOffset first;
         CharOffset last; // Does not include LF.
-<<<<<<< HEAD
-
-=======
-        
->>>>>>> 7e9de5b (apply starfreaks patches)
         bool operator==(const LineRange&) const = default;
     };
 
