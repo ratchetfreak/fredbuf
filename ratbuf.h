@@ -326,10 +326,16 @@ namespace RatchetPieceTree
         {
             return Length{ rep(meta.lf_count) + 1 };
         }
+        Length length() const
+        {
+            return meta.total_content_length;
+        }
         uint64_t depth()
         {
             return root.depth();
         }
+        // Note, this will not increment refs.  That must be done by the caller.
+        BufferCollection buffer_collection_no_ref() const;
     private:
         friend class TreeWalker;
         friend class ReverseTreeWalker;
@@ -375,7 +381,7 @@ namespace RatchetPieceTree
         StorageTree root;
         BufferMeta meta;
         // A reference to the underlying tree buffers.
-        const BufferCollection* buffers;
+        BufferCollection buffers;
     };
 
     class TreeWalker
@@ -384,7 +390,7 @@ namespace RatchetPieceTree
         TreeWalker(Arena::Arena* arena, const Tree* tree, CharOffset offset = CharOffset{ });
         TreeWalker(Arena::Arena* arena,const OwningSnapshot* snap, CharOffset offset = CharOffset{ });
         TreeWalker(Arena::Arena* arena,const ReferenceSnapshot* snap, CharOffset offset = CharOffset{ });
-        TreeWalker(Arena::Arena* arena, const BufferCollection* buffers, const BufferMeta& meta, const StorageTree* root, CharOffset offset = CharOffset{ });
+        TreeWalker(Arena::Arena* arena, const BufferCollection* buffers, const BufferMeta& meta, const StorageTree& root, CharOffset offset = CharOffset{ });
         TreeWalker(const TreeWalker&) = delete;
 
         char current() const;
@@ -419,11 +425,6 @@ namespace RatchetPieceTree
             RatchetPieceTree::StorageTree::NodePtr node;
             size_t index = 0;
         };
-        StackEntry* stack;
-        uint64_t stackCount;
-        //std::vector<StackEntry> stack;
-        const char* first_ptr = nullptr;
-        const char* last_ptr = nullptr;
     private:
         void populate_ptrs();
         void fast_forward_to(CharOffset offset);
@@ -431,7 +432,12 @@ namespace RatchetPieceTree
         const BufferCollection* buffers;
         StorageTree root;
         BufferMeta meta;
+        StackEntry* stack;
+        uint64_t stackCount;
         CharOffset total_offset = CharOffset{ 0 };
+        //std::vector<StackEntry> stack;
+        const char* first_ptr = nullptr;
+        const char* last_ptr = nullptr;
     };
 
     class ReverseTreeWalker
