@@ -879,9 +879,6 @@ void test10()
     Arena::scratch_end(scratch);
 }
 
-
-}
-
 void test11()
 {
     auto scratch = Arena::scratch_begin(Arena::no_conflicts);
@@ -950,11 +947,12 @@ void test12()
 int main()
 {
     // Setup the scratch arenas.
-    constexpr int arena_size = 2;
+    constexpr int arena_size = 3;
     Arena::Arena* scratch_arenas[arena_size];
     // Generally, you only need two arenas to handle all conflicts.
     scratch_arenas[0] = Arena::alloc(Arena::default_params);
     scratch_arenas[1] = Arena::alloc(Arena::default_params);
+    scratch_arenas[2] = Arena::alloc(Arena::default_params);
     Arena::populate_scratch_arenas({ scratch_arenas, arena_size });
 
     test1();
