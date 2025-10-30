@@ -181,7 +181,11 @@ namespace RatchetPieceTree
     // Counted node management.
     void dec_node_ref(const BNodeCounted* node);
     template<size_t MaxChildren>
-    const BNodeCounted* take_node_ref(const BNodeCountedGeneric<MaxChildren>* node);
+    BNodeCountedGeneric<MaxChildren>* take_node_ref( BNodeCountedGeneric<MaxChildren>* node);
+    template<size_t MaxChildren>
+    BNodeCountedGeneric<MaxChildren>* take_node_ref( BNodeCountedInternal<MaxChildren>* node);
+    template<size_t MaxChildren>
+    BNodeCountedGeneric<MaxChildren>* take_node_ref( BNodeCountedLeaf<MaxChildren>* node);
     
     const BNodeCounted* take_node_ref(const BNodeCounted* node);
     //const BNodeCounted* make_node(BTreeBlock* blk, Color c, const BNodeCounted* lft, const NodeData& data, const BNodeCounted* rgt);
@@ -292,15 +296,17 @@ namespace RatchetPieceTree
         B_Tree remove(BufferCollection* blk, Offset at, Length len) const;
 
         // Duplication.
-        B_Tree dup() const;
+        B_Tree<MaxChildren> dup() const;
         uint64_t depth() const
         {
             return tree_depth;
         }
     private:
+        //root must be pretaken
         B_Tree(NodePtr root, uint32_t depth);
 
         struct TreeManipResult{
+            //nodes here are already taken
             NodeVector nodes;
             size_t count;
             uint32_t depth;
@@ -312,6 +318,7 @@ namespace RatchetPieceTree
         TreeManipResult remove_from_leafs(Arena::Arena *arena, BufferCollection* blk, LeafNodePtr a, LeafNodePtr b, LeafNodePtr c, Length at, Length len) const;
         
         static NodePtr construct_leaf(BTreeBlock* blk, const NodeData* data, size_t begin, size_t end) ;
+        // NodeVectors must be pre-taken
         static NodePtr construct_internal(BTreeBlock* blk, NodeVector data, size_t begin, size_t end);
 
         NodePtr root_node;
