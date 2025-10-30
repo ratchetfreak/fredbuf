@@ -12,6 +12,7 @@
 //#include <sstream>
 #include <bit>
 
+#include "arena.h"
 #include "types.h"
 #include "enum-utils.h"
 #include "scope-guard.h"
@@ -76,7 +77,7 @@ namespace RatchetPieceTree
             return B_Tree(reinterpret_cast<NodePtr>(construct_leaf(blk, leafNodes, 0, leafCount)), 1);
         }
         B_Tree<MaxChildren> result;
-        Arena::Temp scratch = Arena::scratch_begin(Arena::no_conflicts);
+        Arena::Temp scratch = Arena::scratch_begin({&blk->alloc_arena, 1});
         NodeVector nodes = Arena::push_array<NodePtr>(scratch.arena, leafCount/MaxChildren + 4);
         size_t nodeCount = 0;
         size_t i = 0;
@@ -130,7 +131,7 @@ namespace RatchetPieceTree
     template<size_t MaxChildren>
     B_Tree<MaxChildren> B_Tree<MaxChildren>::insert(BufferCollection* blk, const NodeData& x, Offset at) const
     {
-        Arena::Temp scratch = scratch_begin(Arena::no_conflicts);
+        Arena::Temp scratch = Arena::scratch_begin({&blk->rb_tree_blk->alloc_arena, 1});
         NodePtr root = root_node;
         auto result = insertInto(scratch.arena, blk, root, x, Editor::distance(Offset(0), at));
         size_t newNumChildren = result.count;
@@ -295,7 +296,8 @@ namespace RatchetPieceTree
             
             return res;
         }
-        Arena::Temp scratch = Arena::scratch_begin({&arena, 1});
+            Arena::Temp scratch = Arena::scratch_begin_vararg(arena, blk->rb_tree_blk->alloc_arena);
+            //Arena::Temp scratch = Arena::scratch_begin({&arena, 1});
         auto offsets_end = node->offsets.begin()+node->childCount;
         auto insertPoint = std::lower_bound(node->offsets.begin(), offsets_end, at);
         auto insertIndex = insertPoint - node->offsets.begin();
@@ -416,14 +418,16 @@ namespace RatchetPieceTree
     template<size_t MaxChildren>
     B_Tree<MaxChildren>::TreeManipResult B_Tree<MaxChildren>::remove_from_leafs(Arena::Arena *arena, BufferCollection* blk, LeafNodePtr a, LeafNodePtr b, LeafNodePtr c, Length at, Length len) const
     {
-        Arena::Temp scratch = Arena::scratch_begin({&arena, 1});
+        Arena::Temp scratch = Arena::scratch_begin_vararg(arena, blk->rb_tree_blk->alloc_arena);
+        //Arena::Temp scratch = Arena::scratch_begin({&arena, 1});
+        
         // b or c might be nullptr
 
         NodeData *allLeafs = Arena::push_array<NodeData>(scratch.arena, MaxChildren*3);
         size_t leaflength = 0;
         {
             auto ch = (a->children);
-            for(auto it = ch.begin(); it != ch.begin()+b->childCount;++it)
+            for(auto it = ch.begin(); it != ch.begin()+a->childCount;++it)
             {
                 allLeafs[leaflength++]=(*it);
             }
@@ -569,6 +573,7 @@ namespace RatchetPieceTree
             //assert(allChildren.size() >= MaxChildren/2);
             result.nodes[0] = (construct_leaf(blk->rb_tree_blk, allChildren, 0, resultCount));
         }
+        Arena::scratch_end(scratch);
         return result;
     }
 
@@ -624,7 +629,8 @@ namespace RatchetPieceTree
         }
         else
         {
-            Arena::Temp scratch = Arena::scratch_begin({&arena, 1});
+            Arena::Temp scratch = Arena::scratch_begin_vararg(arena, blk->rb_tree_blk->alloc_arena);
+            //Arena::Temp scratch = Arena::scratch_begin({&arena, 1});
             InternalNodePtr in = reinterpret_cast<InternalNodePtr>(node);
             NodeVector node_children = (in->children);
             auto offsets_end = node->offsets.begin()+node->childCount;
@@ -694,9 +700,11 @@ namespace RatchetPieceTree
     template<size_t MaxChildren>
     B_Tree<MaxChildren>::TreeManipResult B_Tree<MaxChildren>::remove_from(Arena::Arena *arena, BufferCollection* blk, NodePtr a, NodePtr b, NodePtr c, Length at, Length len) const
     {
+        Arena::Temp scratch = Arena::scratch_begin_vararg(arena, blk->rb_tree_blk->alloc_arena);
+        //Arena::Temp scratch = Arena::scratch_begin({&arena, 1});
+        
         // at least one of a and c should not participate in the remove
         // that way the result is always big enough to make at least 1 node
-        Arena::Temp scratch = Arena::scratch_begin({&arena, 1});
         if(a)algo_mark(a->shared_from_this(), Collect);
         if(b)algo_mark(b->shared_from_this(), Collect);
         if(c)algo_mark(c->shared_from_this(), Collect);
@@ -1378,7 +1386,7 @@ namespace RatchetPieceTree
         const auto buf_count = buffers.orig_buffers.count;
         
         size_t leafCount = 0;
-        Arena::Temp scratch = Arena::scratch_begin(Arena::no_conflicts);
+        Arena::Temp scratch = Arena::scratch_begin({&buffers.immutable_buf_arena, 1});
         NodeData* leafNodes = Arena::push_array<NodeData>(scratch.arena, buf_count);
 
         for (size_t i = 0; i < buf_count; ++i)

@@ -220,7 +220,7 @@ namespace Arena
         return (Arena*)(void*)-1;
     }
 
-    void temp_end(Temp temp)
+    void temp_end(Temp& temp)
     {
         pop_to(temp.arena, temp.pos);
     }
@@ -245,6 +245,7 @@ namespace Arena
                     has_conflict = true;
                     break;
                 }
+                conflict_ptr = va_arg(args, Arena*);
             }
             va_end(args);
             if(not has_conflict)
@@ -289,8 +290,9 @@ namespace Arena
         return tmp;
     }
 
-    void scratch_end(Temp scratch)
+    void scratch_end(Temp& scratch)
     {
         temp_end(scratch);
+        scratch.arena = nullptr;
     }
 } // namespace Arena

@@ -49,6 +49,9 @@ namespace Arena
     {
         Arena* arena;
         Position pos;
+        ~Temp(){
+            if(arena != nullptr)__debugbreak();
+        }
     };
 
     struct Conflicts
@@ -83,16 +86,16 @@ namespace Arena
 
     // Temporary arena allocation.
     Temp temp_begin(Arena* arena);
-    void temp_end(Temp temp);
+    void temp_end(Temp &temp);
 
     Arena* nil_arena();
-    #define scratch_begin_vararg(...) scratch_begin_vars(__FILE__, __LINE__, __VARARG__, nil_arena())
+    #define scratch_begin_vararg(...) scratch_begin_vars(__FILE__, __LINE__, __VA_ARGS__, Arena::nil_arena())
     
-    Temp scratch_begin(const char* file, int line, ...);
+    Temp scratch_begin_vars(const char* file, int line, ...);
 
     // (Related to above) temporary per-thread scratch arenas.
     Temp scratch_begin(Conflicts conflicts, const char* file = __builtin_FILE(), int line = __builtin_LINE());
-    void scratch_end(Temp scratch);
+    void scratch_end(Temp &scratch);
     void validate_scratch_arenas();
 
     // Typed helper functions.
