@@ -215,9 +215,49 @@ namespace Arena
         return temp;
     }
 
+    Arena* nil_arena()
+    {
+        return (Arena*)(void*)-1;
+    }
+
     void temp_end(Temp temp)
     {
         pop_to(temp.arena, temp.pos);
+    }
+    
+    Temp scratch_begin_vars(const char* file, int line, ...)
+    {
+       
+        Arena* result = nullptr;
+        Arena** arena_ptr = global_scratch_arenas.arenas;
+        for(uint64_t i = 0; i < global_scratch_arenas.size; ++i, ++arena_ptr)
+        {
+            bool has_conflict = false;
+             va_list args;
+            va_start(args, line);
+            
+            Arena* conflict_ptr = va_arg(args, Arena*);
+            while (conflict_ptr != nil_arena())
+            {
+                
+                if(*arena_ptr == conflict_ptr)
+                {
+                    has_conflict = true;
+                    break;
+                }
+            }
+            va_end(args);
+            if(not has_conflict)
+            {
+                result = *arena_ptr;
+                break;
+            }
+        
+        }
+        Temp tmp = temp_begin(result);
+        FRED_UNUSED(file);
+        FRED_UNUSED(line);
+        return tmp;
     }
 
     // (Related to above) temporary per-thread scratch arenas.

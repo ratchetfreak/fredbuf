@@ -85,6 +85,11 @@ namespace Arena
     Temp temp_begin(Arena* arena);
     void temp_end(Temp temp);
 
+    Arena* nil_arena();
+    #define scratch_begin_vararg(...) scratch_begin_vars(__FILE__, __LINE__, __VARARG__, nil_arena())
+    
+    Temp scratch_begin(const char* file, int line, ...);
+
     // (Related to above) temporary per-thread scratch arenas.
     Temp scratch_begin(Conflicts conflicts, const char* file = __builtin_FILE(), int line = __builtin_LINE());
     void scratch_end(Temp scratch);
