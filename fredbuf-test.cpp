@@ -8,9 +8,17 @@
 #include "fred-strings.h"
 
 #define COUNT_ALLOC
+
+#define USE_RATBUF 1
+
+#if USE_RATBUF
 #include "ratbuf.h"
 #include "ratbuf_btree.h"
 #define PieceTree RatchetPieceTree 
+#else
+#include "fredbuf.h"
+#include "fredbuf-rbtree.h"
+#endif
 
 
 // Debug helper from fredbuf.cpp.
@@ -904,9 +912,6 @@ void test12()
     TreeBuilder builder = tree_builder_start(arena);
 
     for(int i = 0; i< 10; i++)
-        tree_builder_accept(arena, &builder, str8_mut(str8_literal("Hello, World!")));
-        
-    for(int i = 0; i< 10; i++)
         tree_builder_accept(scratch.arena, &builder, str8_mut(str8_literal("Hello, \rWorld!\r\n")));
 
     Tree* tree = tree_builder_finish(&builder);
@@ -1000,10 +1005,8 @@ int main()
 #include "arena.cpp"
 #include "fred-strings.cpp"
 
-#if 1
-#include "ratbuf.h"
+#if USE_RATBUF
 #include "ratbuf_btree.cpp"
-#define PieceTree RatchetPieceTree 
 #else
 #include "fredbuf.cpp"
 #endif
