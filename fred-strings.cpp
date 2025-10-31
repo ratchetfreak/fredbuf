@@ -58,6 +58,10 @@ void str8_serial_push_str8(Arena::Arena* arena, String8List* lst, String8 str)
     auto arena_pos = Arena::pos(arena);
     char* buf = Arena::push_array_no_zero_aligned<char>(arena, str.size, Arena::Alignment{ alignof(char) });
     String8* latest = &lst->last->string;
+    if (latest->str == nullptr && latest->size == 0)
+    {
+        latest->str = buf;
+    }
     if (latest->str + latest->size == buf)
     {
         latest->size += str.size;
