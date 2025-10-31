@@ -26,8 +26,10 @@
 #define FRED_UNUSED_RESULT(x) (void)x
 
 // Please implement this per your platform.
-#define ASAN_POISON_MEMORY_REGION(addr, size)
-#define ASAN_UNPOISON_MEMORY_REGION(addr, size)
+#define ASAN_POISON_MEMORY_REGION(addr, size) \
+                    memset(addr, 0xfe, size)
+#define ASAN_UNPOISON_MEMORY_REGION(addr, size) \
+                    memset(addr, 0xef, size)
 
 // Data structure macros (mostly borrowed from RADDBG).
 #define CheckNil(nil,p) ((p) == 0 || (p) == nil)

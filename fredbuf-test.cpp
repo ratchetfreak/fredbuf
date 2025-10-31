@@ -2,8 +2,6 @@
 
 #include <cassert>
 
-
-
 #include "arena.h"
 #include "fred-strings.h"
 

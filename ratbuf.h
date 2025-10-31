@@ -78,18 +78,18 @@ namespace RatchetPieceTree
         uint64_t* ref_count;
     };
     
+    struct alignas(16) FreeList
+    {
+        BNodeCounted* head;
+        uint64_t tag;
+        
+    };
     
     // Note: We add/remove from this list using atomic operations, which is why this is 16-byte aligned.
-    struct alignas(16) BNodeFreeList
+    struct  BNodeFreeList
     {
-        struct{
-        BNodeCounted* head;
-        uint64_t tag;
-        } internal;
-        struct{
-        BNodeCounted* head;
-        uint64_t tag;
-        } leaf;
+        FreeList internal;
+        FreeList leaf;
     };
     
     struct BTreeBlock
@@ -236,7 +236,7 @@ namespace RatchetPieceTree
         static void populate_from_node(Arena::Arena* arena, String8List* lst, const BufferCollection* buffers, const StorageTree& node);
         static void populate_from_node(Arena::Arena* arena, String8List* lst, const BufferCollection* buffers, const StorageTree& node, Line line_index);
         static LFCount line_feed_count(const BufferCollection* buffers, BufferIndex index, const BufferCursor& start, const BufferCursor& end);
-        static NodePosition node_at(const BufferCollection* buffers, StorageTree node, CharOffset off);
+        static NodePosition node_at(const BufferCollection* buffers, const StorageTree& node, CharOffset off);
         static BufferCursor buffer_position(const BufferCollection* buffers, const Piece& piece, Length remainder);
         static char char_at(const BufferCollection* buffers, const StorageTree& node, CharOffset offset);
         static Piece trim_piece_right(const BufferCollection* buffers, const Piece& piece, const BufferCursor& pos);
@@ -309,6 +309,9 @@ namespace RatchetPieceTree
     public:
         explicit OwningSnapshot(Arena::Arena* mut_buf_arena, const Tree* tree);
         explicit OwningSnapshot(Arena::Arena* mut_buf_arena, const Tree* tree, const StorageTree& dt);
+        OwningSnapshot() = delete;
+        OwningSnapshot(const OwningSnapshot&) = delete;
+        OwningSnapshot &operator =(const OwningSnapshot&) = delete;
 
         // Queries.
         String8 get_line_content(Arena::Arena* arena, Line line) const;

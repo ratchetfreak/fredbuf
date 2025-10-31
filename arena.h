@@ -49,9 +49,7 @@ namespace Arena
     {
         Arena* arena;
         Position pos;
-        ~Temp(){
-            if(arena != nullptr)__debugbreak();
-        }
+        ~Temp();
     };
 
     struct Conflicts

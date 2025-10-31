@@ -74,7 +74,7 @@ namespace RatchetPieceTree
         }
         if(leafCount <= MaxChildren)
         {
-            return B_Tree(reinterpret_cast<NodePtr>(construct_leaf(blk, leafNodes, 0, leafCount)), 1);
+            return B_Tree(construct_leaf(blk, leafNodes, 0, leafCount), 1);
         }
         B_Tree<MaxChildren> result;
         Arena::Temp scratch = Arena::scratch_begin({&blk->alloc_arena, 1});
@@ -119,7 +119,9 @@ namespace RatchetPieceTree
             
             depth++;
         }
-        return B_Tree(construct_internal(blk, nodes, 0, nodeCount), depth+1);
+        B_Tree r {construct_internal(blk, nodes, 0, nodeCount), depth+1};
+        Arena::scratch_end(scratch);
+        return r;
     }
 
     template<size_t MaxChildren>
@@ -150,9 +152,9 @@ namespace RatchetPieceTree
             }
             else
             {
-                
+                B_Tree<MaxChildren> r {result.nodes[0], result.depth};
                 Arena::scratch_end(scratch);
-                return B_Tree<MaxChildren>(std::move(result.nodes[0]), result.depth);
+                return r;//std::move(r);
             }
         }
     }
@@ -573,6 +575,11 @@ namespace RatchetPieceTree
             //assert(allChildren.size() >= MaxChildren/2);
             result.nodes[0] = (construct_leaf(blk->rb_tree_blk, allChildren, 0, resultCount));
         }
+        else
+        {
+            result.nodes = nullptr;
+            result.count = 0;
+        }
         Arena::scratch_end(scratch);
         return result;
     }
@@ -607,7 +614,7 @@ namespace RatchetPieceTree
 
     void Tree::insert(CharOffset offset, String8 txt, SuppressHistory suppress_history)
     {
-        if (txt.size)
+        if (txt.size == 0)
             return;
         // This allows us to undo blocks of code.
         if (is_no(suppress_history)
@@ -670,6 +677,7 @@ namespace RatchetPieceTree
             }
 
             TreeManipResult manipresult{};
+            manipresult.depth = insert_result.depth+1;
             manipresult.nodes = Arena::push_array<NodePtr>(arena, in->childCount + 2);
             if(resultCount > MaxChildren)
             {
@@ -962,6 +970,51 @@ namespace RatchetPieceTree
     }
 
 
+
+    template<size_t MaxChildren>
+    void dec_node_ref(const BNodeCountedGeneric<MaxChildren>* node)
+    {
+        if (node == nullptr)
+            return;
+        
+        
+        uint64_t count = os_atomic_u64_dec_eval(&node->blk->ref_count);
+        if (count == 0)
+        {
+            BNodeCountedGeneric<MaxChildren>* mut_node = const_cast<BNodeCountedGeneric<MaxChildren>*>(node);
+            if(node->type == NodeType::INTERNAL)
+            {
+                BNodeCountedInternal<MaxChildren> *in = reinterpret_cast<BNodeCountedInternal<MaxChildren> *>(mut_node);
+                for EachIndex(i, in->childCount)
+                {
+                    dec_node_ref(in->children[i]);
+                }
+            }
+            // Finally, detach this node and add to the free list atomically.
+            FreeList old_head{};
+            FreeList next_head{};
+            static_assert(alignof(FreeList) == 16);
+            FreeList *frl;
+            if(node->type == NodeType::LEAF)
+                frl = &node->blk->base_blk->free_list.leaf;
+            else if(node->type == NodeType::INTERNAL)
+                frl = &node->blk->base_blk->free_list.internal;
+            else
+            {
+                __debugbreak();
+                frl = nullptr;
+            }
+            os_atomic_u128_eval(frl, &old_head);
+            do
+            {
+                mut_node->next = reinterpret_cast<BNodeCountedGeneric<MaxChildren>*>(old_head.head);
+                next_head.head = reinterpret_cast<BNodeCounted*>(mut_node);
+                next_head.tag = old_head.tag + 1;
+            } while (not os_atomic_u128_eval_cond_assign(frl, next_head, &old_head));
+        }
+    }
+
+
     template<size_t MaxChildren>
     BNodeCountedGeneric<MaxChildren>* take_node_ref( BNodeCountedGeneric<MaxChildren>* node)
     {
@@ -1021,6 +1074,7 @@ namespace RatchetPieceTree
         zero_bytes(node_blk);
         
         node->blk = node_blk;
+        node_blk->base_blk = blk;
         
         take_node_ref(node);
         node->type = NodeType::LEAF;
@@ -1084,6 +1138,7 @@ namespace RatchetPieceTree
         zero_bytes(node_blk);
         
         node->blk = node_blk;
+        node_blk->base_blk = blk;
         
         take_node_ref(node);
         node->type = NodeType::INTERNAL;
@@ -1096,6 +1151,7 @@ namespace RatchetPieceTree
         NodeVector new_left_children = &node->children[0];
         std::array<Length, MaxChildren>&  new_left_offsets = result->offsets;
         std::array<LFCount, MaxChildren>&  new_left_linefeed = result->lineFeeds;
+        result->childCount = numChild;
         Length acc{0};
         LFCount linefeed{0};
         for(int i = 0; i < numChild; i++)
@@ -1111,6 +1167,32 @@ namespace RatchetPieceTree
 
         algo_mark(result, Made);
         return result;
+    }
+
+
+    template<size_t MaxChildren>
+    B_Tree<MaxChildren>::B_Tree(B_Tree<MaxChildren>&& other):
+        root_node{ other.root_node },
+        tree_depth{ other.tree_depth }
+    {
+        other.root_node = reinterpret_cast<NodePtr>(nil_node());
+    }
+
+    template<size_t MaxChildren>
+    B_Tree<MaxChildren>& B_Tree<MaxChildren>::operator=(B_Tree<MaxChildren>&& other)
+    {
+        tree_depth = other.tree_depth;
+        // Swap these, so the dtor for 'other' will handle decrementing the ref.
+        NodePtr old_root = root_node;
+        root_node = other.root_node;
+        other.root_node = old_root;
+        return *this;
+    }
+
+    template<size_t MaxChildren>
+    B_Tree<MaxChildren>::~B_Tree()
+    {
+        dec_node_ref(root_node);
     }
 
     template<size_t MaxChildren>
@@ -1135,7 +1217,10 @@ namespace RatchetPieceTree
         std::vector<NPtr> layer;
         std::vector<NPtr> next_layer;
         
-        if(root.is_empty() || root.root_ptr()->isLeaf())
+        if(root.is_empty())
+            return;
+        
+        if(root.root_ptr()->isLeaf())
         {
             assert(root.root_ptr()->childCount <= MaxChildren);
             return;
@@ -1269,6 +1354,11 @@ namespace RatchetPieceTree
         {
             LineStart* new_starts = Arena::push_array_no_zero_aligned<LineStart>(collection->mut_buf_starts_arena, 1, Arena::Alignment{ alignof(LineStart) });
             LineStarts* starts = &collection->mod_buffer.line_starts;
+            if(starts->starts == nullptr)
+            {
+                assert(starts->count == 0);
+                starts->starts = new_starts;
+            }
             assert(starts->starts + starts->count == new_starts);
             new_starts[0] = start;
             ++starts->count;
@@ -1637,11 +1727,11 @@ namespace RatchetPieceTree
 
     StorageTree Tree::head() const
     {
-        return root;
+        return root.dup();
     }
     void Tree::snap_to(const StorageTree& new_root)
     {
-        root = new_root;
+        root = new_root.dup();
         compute_buffer_meta();
     }
 
@@ -1727,7 +1817,7 @@ namespace RatchetPieceTree
         return piece;
     }
 
-    NodePosition Tree::node_at(const BufferCollection* buffers, StorageTree tree, CharOffset off)
+    NodePosition Tree::node_at(const BufferCollection* buffers, const StorageTree &tree, CharOffset off)
     {
         if (tree.is_empty())
             return { };
@@ -1904,7 +1994,7 @@ namespace RatchetPieceTree
         } };
         end_last_insert = extend(offset, txt.size);
 
-        StorageTree old_tree = root;
+        
         if (root.is_empty())
         {
             auto piece = build_piece(txt);
@@ -1929,7 +2019,7 @@ namespace RatchetPieceTree
 #endif
         } };
         
-        StorageTree old_tree = root;
+        
         root = root.remove(&buffers, offset, count);
         //FIXME (ratchetfreak): release tree
     }
@@ -2150,9 +2240,9 @@ namespace RatchetPieceTree
 
 
     OwningSnapshot::OwningSnapshot(Arena::Arena* mut_buf_arena, const Tree* tree):
-        root{ tree->root },
+        root{ tree->root.dup() },
         meta{ tree->meta },
-        buffers{ tree->buffers } 
+        buffers{ take_buffer_ref(&tree->buffers) } 
     {
         // Copy the mut buf and place it in the buffers.  Since deletion only erases the
         // arenas, we can overwrite the mut buf and its line endings.
@@ -2228,12 +2318,12 @@ namespace RatchetPieceTree
     }
 
     ReferenceSnapshot::ReferenceSnapshot(const Tree* tree):
-        root{ tree->root },
+        root{ tree->root.dup() },
         meta{ tree->meta },
         buffers{ take_buffer_ref(&tree->buffers) } { }
 
     ReferenceSnapshot::ReferenceSnapshot(const Tree* tree, const StorageTree& dt):
-        root{ dt },
+        root{ dt.dup() },
         meta{ tree->meta },
         buffers{ take_buffer_ref(&tree->buffers) }
     {
@@ -2362,7 +2452,7 @@ namespace RatchetPieceTree
 
     TreeWalker::TreeWalker(Arena::Arena* arena, const Tree* tree, CharOffset offset):
         buffers{ &tree->buffers },
-        root{ tree->root },
+        root{ tree->root.dup() },
         meta{ tree->meta },
         stack{ nullptr },
         stackCount{ 1 },
@@ -2374,7 +2464,7 @@ namespace RatchetPieceTree
 
     TreeWalker::TreeWalker(Arena::Arena* arena, const OwningSnapshot* snap, CharOffset offset):
         buffers{ &snap->buffers },
-        root{ snap->root },
+        root{ snap->root.dup() },
         meta{ snap->meta },
         stack{ nullptr },
         stackCount{ 1 },
@@ -2386,7 +2476,7 @@ namespace RatchetPieceTree
 
     TreeWalker::TreeWalker(Arena::Arena* arena, const ReferenceSnapshot* snap, CharOffset offset):
         buffers{ &snap->buffers },
-        root{ snap->root },
+        root{ snap->root.dup() },
         meta{ snap->meta },
         stack{ nullptr },
         stackCount{ 1 },
@@ -2564,7 +2654,7 @@ namespace RatchetPieceTree
 
     ReverseTreeWalker::ReverseTreeWalker(Arena::Arena* arena, const Tree* tree, CharOffset offset):
         buffers{ &tree->buffers },
-        root{ tree->root },
+        root{ tree->root.dup() },
         meta{ tree->meta },
         stack{ nullptr },
         stackCount{ 1 },
@@ -2576,7 +2666,7 @@ namespace RatchetPieceTree
 
     ReverseTreeWalker::ReverseTreeWalker(Arena::Arena* arena, const OwningSnapshot* snap, CharOffset offset):
         buffers{ &snap->buffers },
-        root{ snap->root },
+        root{ snap->root.dup() },
         meta{ snap->meta },
         stack{ nullptr },
         stackCount{ 1 },
@@ -2588,7 +2678,7 @@ namespace RatchetPieceTree
 
     ReverseTreeWalker::ReverseTreeWalker(Arena::Arena* arena, const ReferenceSnapshot* snap, CharOffset offset):
         buffers{ &snap->buffers },
-        root{ snap->root },
+        root{ snap->root.dup() },
         meta{ snap->meta },
         stack{ nullptr },
         stackCount{ 1 },
@@ -2673,7 +2763,7 @@ namespace RatchetPieceTree
             stack[stackCount++]={children[stack[stackCount].node->childCount - stack[stackCount].index], 0};
         }
 
-        StorageTree::LeafNodePtr ln = reinterpret_cast<StorageTree::LeafNodePtr>(stack[stackCount].node);
+        StorageTree::LeafNodePtr ln = reinterpret_cast<StorageTree::LeafNodePtr>(stack[stackCount-1].node);
         NodeData* leafs = (&ln->children[0]);
 
         stack[stackCount-1].index++;

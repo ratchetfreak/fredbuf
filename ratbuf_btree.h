@@ -181,6 +181,12 @@ namespace RatchetPieceTree
     // Counted node management.
     void dec_node_ref(const BNodeCounted* node);
     template<size_t MaxChildren>
+    void dec_node_ref(const BNodeCountedGeneric<MaxChildren>* node);
+    template<size_t MaxChildren>
+    void dec_node_ref(const BNodeCountedInternal<MaxChildren>* node);
+    template<size_t MaxChildren>
+    void dec_node_ref(const BNodeCountedLeaf<MaxChildren>* node);
+    template<size_t MaxChildren>
     BNodeCountedGeneric<MaxChildren>* take_node_ref( BNodeCountedGeneric<MaxChildren>* node);
     template<size_t MaxChildren>
     BNodeCountedGeneric<MaxChildren>* take_node_ref( BNodeCountedInternal<MaxChildren>* node);
@@ -274,6 +280,11 @@ namespace RatchetPieceTree
         };
         #endif
         explicit B_Tree() = default;
+        B_Tree(B_Tree&&);
+        B_Tree(const B_Tree&) = delete;
+        B_Tree& operator=(const B_Tree&) = delete;
+        B_Tree& operator=(B_Tree&&);
+        ~B_Tree();
 
         NodePtr root_ptr() const;
         bool is_empty() const;
@@ -321,7 +332,7 @@ namespace RatchetPieceTree
         // NodeVectors must be pre-taken
         static NodePtr construct_internal(BTreeBlock* blk, NodeVector data, size_t begin, size_t end);
 
-        NodePtr root_node;
+        NodePtr root_node = nullptr;
         uint32_t tree_depth=0;
 
     };

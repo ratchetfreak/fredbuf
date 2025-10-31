@@ -59,13 +59,14 @@ namespace Arena
             arena->pos = Position{ arena_header };
             arena->os_cmt = commit_size;
             arena->os_res = reserve_size;
-            ASAN_POISON_MEMORY_REGION(base, rep(commit_size));
-            ASAN_UNPOISON_MEMORY_REGION(base, arena_header);
+            ASAN_POISON_MEMORY_REGION(((char*)base)+arena_header, rep(commit_size)-arena_header);
+            //ASAN_UNPOISON_MEMORY_REGION(base, arena_header);
             return arena;
         }
 
         void* push_internal(Arena* arena, AllocSize size, Alignment align, ZeroMem zero)
         {
+            if(rep(size) == 0)return nullptr;
             Arena* current = arena->current;
             Position pos_pre = Position{ align_pow_2(rep(current->pos), rep(align)) };
             Position pos_post = extend(pos_pre, rep(size));
@@ -293,6 +294,11 @@ namespace Arena
     void scratch_end(Temp& scratch)
     {
         temp_end(scratch);
-        scratch.arena = nullptr;
+        scratch.arena = nil_arena();
+    }
+    
+    Temp::~Temp(){
+        if(arena != nil_arena())
+            __debugbreak();
     }
 } // namespace Arena
