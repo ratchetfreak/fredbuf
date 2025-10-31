@@ -13,7 +13,7 @@
 
 
 #ifndef NDEBUG
-//#define LOG_ALGORITHM
+#define LOG_ALGORITHM
 #endif // NDEBUG
 namespace RatchetPieceTree
 {
@@ -193,7 +193,7 @@ namespace RatchetPieceTree
     template<size_t MaxChildren>
     BNodeCountedGeneric<MaxChildren>* take_node_ref( BNodeCountedLeaf<MaxChildren>* node);
     
-    const BNodeCounted* take_node_ref(const BNodeCounted* node);
+    //const BNodeCounted* take_node_ref(const BNodeCounted* node);
     //const BNodeCounted* make_node(BTreeBlock* blk, Color c, const BNodeCounted* lft, const NodeData& data, const BNodeCounted* rgt);
 
     struct BufferCollection;
@@ -372,14 +372,25 @@ namespace RatchetPieceTree
     };
 #ifdef LOG_ALGORITHM
     enum class MarkReason : size_t { None, Traverse, Collect, Made, Skip };
+    struct decrefer
+    {
+        void operator()(BNodeCountedGeneric<16>* node)
+        {
+            dec_node_ref(node);
+        }
+    };
+    
     struct algo_marker
     {
-        B_Tree<10>::NodePtr node;
+        std::unique_ptr<BNodeCountedGeneric<16>, decrefer> node;
         MarkReason reason;
+        
     };
     extern std::vector<algo_marker> algorithm;
 
-#define algo_mark(node, reason) algorithm.push_back({node, MarkReason::reason})
+#define algo_mark(n, r) algorithm.push_back(algo_marker{ \
+        .node = std::unique_ptr<BNodeCountedGeneric<16>, decrefer>{take_node_ref(n)}, \
+        .reason = MarkReason::r})
 #else
 #define algo_mark(node, reason) do{}while(0)
 #endif

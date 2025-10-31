@@ -287,7 +287,7 @@ namespace RatchetPieceTree
     template<size_t MaxChildren>
     B_Tree<MaxChildren>::TreeManipResult B_Tree<MaxChildren>::insertInto_leaf(Arena::Arena *arena, BufferCollection* blk, LeafNodePtr node, const NodeData& x, Length at) const
     {
-        if(node)algo_mark(node->shared_from_this(), Traverse);
+        if(node)algo_mark(node, Traverse);
         if(node==nullptr)
         {
             B_Tree<MaxChildren>::TreeManipResult res;
@@ -628,7 +628,7 @@ namespace RatchetPieceTree
     template<size_t MaxChildren>
     B_Tree<MaxChildren>::TreeManipResult B_Tree<MaxChildren>::insertInto(Arena::Arena *arena, BufferCollection* blk, const NodePtr node, const NodeData& x, Length at) const
     {
-        if(node)algo_mark(node->shared_from_this(), Traverse);
+        if(node)algo_mark(node, Traverse);
         //TODO(ratchetfreak) : change result to be 1 or more ChildPtrs which is exactly the x node with the insert
         if(node==nullptr||node->isLeaf())
         {
@@ -713,9 +713,9 @@ namespace RatchetPieceTree
         
         // at least one of a and c should not participate in the remove
         // that way the result is always big enough to make at least 1 node
-        if(a)algo_mark(a->shared_from_this(), Collect);
-        if(b)algo_mark(b->shared_from_this(), Collect);
-        if(c)algo_mark(c->shared_from_this(), Collect);
+        if(a)algo_mark(a, Collect);
+        if(b)algo_mark(b, Collect);
+        if(c)algo_mark(c, Collect);
 
         if(a->isLeaf())
         {
@@ -969,8 +969,6 @@ namespace RatchetPieceTree
         }
     }
 
-
-
     template<size_t MaxChildren>
     void dec_node_ref(const BNodeCountedGeneric<MaxChildren>* node)
     {
@@ -981,6 +979,8 @@ namespace RatchetPieceTree
         uint64_t count = os_atomic_u64_dec_eval(&node->blk->ref_count);
         if (count == 0)
         {
+            
+            NEW_NODE_DEALLOC();
             BNodeCountedGeneric<MaxChildren>* mut_node = const_cast<BNodeCountedGeneric<MaxChildren>*>(node);
             if(node->type == NodeType::INTERNAL)
             {
@@ -1040,6 +1040,7 @@ namespace RatchetPieceTree
     template<size_t MaxChildren>
     B_Tree<MaxChildren>::NodePtr B_Tree<MaxChildren>::construct_leaf(BTreeBlock* blk, const NodeData* data, size_t begin, size_t end) 
     {
+        NEW_NODE_ALLOC();
         LeafNodePtr node = nullptr;
         BNodeBlock* node_blk = nullptr;
         // Try to fetch a node from the free list atomically.
@@ -1096,6 +1097,9 @@ namespace RatchetPieceTree
             linefeed =LFCount {rep(linefeed) + rep(data[begin+i].piece.newline_count)};
             new_left_linefeed[i] = linefeed;
         }
+        new_left_offsets[MaxChildren-1] = acc;
+        new_left_linefeed[MaxChildren-1] = linefeed;
+        
         algo_mark(result, Made);
         return result;
     }
@@ -1104,6 +1108,7 @@ namespace RatchetPieceTree
     template<size_t MaxChildren>
     B_Tree<MaxChildren>::NodePtr B_Tree<MaxChildren>::construct_internal(BTreeBlock* blk, B_Tree<MaxChildren>::NodeVector data, size_t begin, size_t end) 
     {
+        NEW_NODE_ALLOC();
         InternalNodePtr node = nullptr;
         BNodeBlock* node_blk = nullptr;
         // Try to fetch a node from the free list atomically.
@@ -1162,8 +1167,9 @@ namespace RatchetPieceTree
             new_left_offsets[i] = acc;
             linefeed =LFCount {rep(linefeed) + rep(data[begin+i]->subTreeLineFeeds())};
             new_left_linefeed[i] = linefeed;
-
         }
+        new_left_offsets[MaxChildren-1] = acc;
+        new_left_linefeed[MaxChildren-1] = linefeed;
 
         algo_mark(result, Made);
         return result;
@@ -2565,7 +2571,7 @@ namespace RatchetPieceTree
         }
         while(!stack[stackCount-1].node->isLeaf())
         {
-            algo_mark(stack[stackCount-1].node->shared_from_this(), Collect);
+            algo_mark(stack[stackCount-1].node, Collect);
             auto &stack_entry = stack[stackCount-1];
             StorageTree::InternalNodePtr in = reinterpret_cast<StorageTree::InternalNodePtr>(stack_entry.node);
             StorageTree::NodeVector children = (&in->children[0]);
@@ -2579,13 +2585,13 @@ namespace RatchetPieceTree
                     accumulated = accumulated + sublen;
                     break;
                 }
-                algo_mark(children[stack_entry.index]->shared_from_this(), Traverse);
+                algo_mark(children[stack_entry.index], Traverse);
                 sublen = subtreelen;
             }
         }
         StorageTree::LeafNodePtr ln = reinterpret_cast<StorageTree::LeafNodePtr>(stack[stackCount-1].node);
         NodeData* children = (&ln->children[0]);
-        algo_mark(stack[stackCount-1].node->shared_from_this(), Collect);
+        algo_mark(stack[stackCount-1].node, Collect);
         Length sublen {0};
         for(stack[stackCount-1].index = 0; stack[stackCount-1].index< stack[stackCount-1].node->childCount;stack[stackCount-1].index++)
         {
@@ -2628,14 +2634,14 @@ namespace RatchetPieceTree
         }
         while(!stack[stackCount-1].node->isLeaf())
         {
-            algo_mark(stack[stackCount-1].node->shared_from_this(), Traverse);
+            algo_mark(stack[stackCount-1].node, Traverse);
             
             StorageTree::InternalNodePtr in = reinterpret_cast<StorageTree::InternalNodePtr>(stack[stackCount-1].node);
             StorageTree::NodeVector children = (&in->children[0]);
             size_t childIndex = stack[stackCount-1].index++;
             stack[stackCount++] = {children[childIndex], 0};
         }
-        algo_mark(stack[stackCount-1].node->shared_from_this(), Traverse);
+        algo_mark(stack[stackCount-1].node, Traverse);
         StorageTree::LeafNodePtr ln = reinterpret_cast<StorageTree::LeafNodePtr>(stack[stackCount-1].node);
         NodeData* leafs = (&ln->children[0]);
         
@@ -2794,7 +2800,7 @@ namespace RatchetPieceTree
 
         while(!stack[stackCount-1].node->isLeaf())
         {
-            algo_mark(stack[stackCount-1].node->shared_from_this(), Collect);
+            algo_mark(stack[stackCount-1].node, Collect);
             auto &stack_entry = stack[stackCount-1];
             StorageTree::InternalNodePtr in = reinterpret_cast<StorageTree::InternalNodePtr>(stack_entry.node);
             StorageTree::NodeVector children = (&in->children[0]);
@@ -2810,13 +2816,13 @@ namespace RatchetPieceTree
                     accumulated = accumulated + sublen;
                     break;
                 }
-                algo_mark(children[stack_entry.index]->shared_from_this(), Traverse);
+                algo_mark(children[stack_entry.index], Traverse);
                 sublen = subtreelen;
             }
         }
         StorageTree::LeafNodePtr ln = reinterpret_cast<StorageTree::LeafNodePtr>(stack[stackCount-1].node);
         NodeData* children = (&ln->children[0]);
-        algo_mark(stack[stackCount-1].node->shared_from_this(), Collect);
+        algo_mark(stack[stackCount-1].node, Collect);
         for(stack[stackCount-1].index = 0; stack[stackCount-1].index< stack[stackCount-1].node->childCount;stack[stackCount-1].index++)
         {
             auto subtreelen = children[stack[stackCount-1].index].piece.length;
