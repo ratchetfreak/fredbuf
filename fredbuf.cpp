@@ -1978,7 +1978,9 @@ namespace PieceTree
         // Note: We give the mod buffer string a +1 for the null.
         buffers.mod_buffer.buffer.str = Arena::push_array_no_zero_aligned<char>(buffers.mut_buf_arena, 1, Arena::Alignment{ alignof(char) });
         buffers.mod_buffer.buffer.str[0] = 0;
-        buffers.mod_buffer.line_starts.starts = Arena::push_array<LineStart>(buffers.mut_buf_starts_arena, 0);
+        Arena::Position position = Arena::pos(buffers.mut_buf_starts_arena);
+        buffers.mod_buffer.line_starts.starts = Arena::push_array<LineStart>(buffers.mut_buf_starts_arena, 1);
+        Arena::pop_to(buffers.mut_buf_starts_arena, position);
         uint8_t* blob = Arena::push_array_aligned<uint8_t>(buffers.immutable_buf_arena, sizeof(Tree), Arena::Alignment{ alignof(Tree) });
         Tree* tree = new (blob) Tree{ buffers };
         return tree;

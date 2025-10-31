@@ -428,6 +428,8 @@ namespace RatchetPieceTree
             RatchetPieceTree::StorageTree::NodePtr node;
             size_t index = 0;
         };
+        StackEntry* stack;
+        uint64_t stackCount;
     private:
         void populate_ptrs();
         void fast_forward_to(CharOffset offset);
@@ -435,8 +437,6 @@ namespace RatchetPieceTree
         const BufferCollection* buffers;
         StorageTree root;
         BufferMeta meta;
-        StackEntry* stack;
-        uint64_t stackCount;
         CharOffset total_offset = CharOffset{ 0 };
         //std::vector<StackEntry> stack;
         const char* first_ptr = nullptr;
