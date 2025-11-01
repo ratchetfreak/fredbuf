@@ -1,11 +1,7 @@
 #pragma once
 
-#include <memory>
-#include <variant>
 #include <vector>
 #include <array>
-#include <string>
-#include <forward_list>
 
 
 #include "macros.h"
@@ -13,7 +9,7 @@
 
 
 #ifndef NDEBUG
-#define LOG_ALGORITHM
+//#define LOG_ALGORITHM
 #endif // NDEBUG
 namespace RatchetPieceTree
 {
