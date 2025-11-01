@@ -108,7 +108,7 @@ namespace RatchetPieceTree
             i = 0;
             for(; i+ MaxChildren*2 < oldCount; i+=MaxChildren)
             {
-                childNodes[nodeCount] = (construct_internal(blk, nodes, i, i+MaxChildren));
+                childNodes[nodeCount++] = (construct_internal(blk, nodes, i, i+MaxChildren));
             }
             remaining = oldCount - i;
             assert((remaining <= (MaxChildren*2) && remaining >= MaxChildren));
@@ -608,13 +608,13 @@ namespace RatchetPieceTree
         //TODO(ratchetfreak) : change result to be 1 or more ChildPtrs which is exactly the x node with the insert
         if(node==nullptr||node->isLeaf())
         {
-            return insertInto_leaf(arena, blk, reinterpret_cast<LeafNodePtr>(node), x, at);
+            return insertInto_leaf(arena, blk, to_leaf_node(node), x, at);
         }
         else
         {
             Arena::Temp scratch = Arena::scratch_begin_vararg(arena, blk->rb_tree_blk->alloc_arena);
             //Arena::Temp scratch = Arena::scratch_begin({&arena, 1});
-            InternalNodePtr in = reinterpret_cast<InternalNodePtr>(node);
+            InternalNodePtr in = to_internal_node(node);
             NodeVector node_children = (in->children);
             auto offsets_end = node->offsets.begin()+node->childCount;
             auto insertPoint = branchless_lower_bound(node->offsets.begin(), offsets_end, at);
@@ -698,7 +698,7 @@ namespace RatchetPieceTree
             assert(!b || b->isLeaf());
             assert(!c || c->isLeaf());
             Arena::scratch_end(scratch);
-            return remove_from_leafs(arena, blk, reinterpret_cast<LeafNodePtr>(a), reinterpret_cast<LeafNodePtr>(b), reinterpret_cast<LeafNodePtr>(c), at, len);
+            return remove_from_leafs(arena, blk, to_leaf_node(a), to_leaf_node(b), to_leaf_node(c), at, len);
         }
         else
         {
@@ -710,21 +710,21 @@ namespace RatchetPieceTree
             NodeVector allChildren = Arena::push_array<NodePtr>(scratch.arena, totalChildCount);
 
             {
-                InternalNodePtr ina = reinterpret_cast<InternalNodePtr>(a);
+                InternalNodePtr ina = to_internal_node(a);
                 NodeVector chA = (ina->children);
                 auto outputIt = allChildren;
                 outputIt = std::copy_n(chA, a->childCount, outputIt);
                 totalChildCount = a->childCount;
                 if(b!=nullptr)
                 {
-                    InternalNodePtr inb = reinterpret_cast<InternalNodePtr>(b);
+                    InternalNodePtr inb = to_internal_node(b);
                     NodeVector chB = (inb->children);
                     outputIt = std::copy_n(chB, b->childCount, outputIt);
                     totalChildCount = totalChildCount + b->childCount;
                 }
                 if(c!=nullptr)
                 {
-                    InternalNodePtr inc = reinterpret_cast<InternalNodePtr>(c);
+                    InternalNodePtr inc = to_internal_node(c);
                     NodeVector chC = (inc->children);
                     outputIt = std::copy_n(chC, c->childCount, outputIt);
                     totalChildCount = totalChildCount + c->childCount;
@@ -960,7 +960,7 @@ namespace RatchetPieceTree
             BNodeCountedGeneric<MaxChildren>* mut_node = const_cast<BNodeCountedGeneric<MaxChildren>*>(node);
             if(node->type == NodeType::INTERNAL)
             {
-                BNodeCountedInternal<MaxChildren> *in = reinterpret_cast<BNodeCountedInternal<MaxChildren> *>(mut_node);
+                BNodeCountedInternal<MaxChildren> *in = to_internal_node(mut_node);
                 for EachIndex(i, in->childCount)
                 {
                     dec_node_ref(in->children[i]);
@@ -1004,13 +1004,13 @@ namespace RatchetPieceTree
     template<size_t MaxChildren>
     BNodeCountedGeneric<MaxChildren>* take_node_ref( BNodeCountedInternal<MaxChildren>* node)
     {
-        return take_node_ref(reinterpret_cast<BNodeCountedGeneric<MaxChildren>*>(node));
+        return take_node_ref(to_node(node));
     }
     
     template<size_t MaxChildren>
     BNodeCountedGeneric<MaxChildren>* take_node_ref( BNodeCountedLeaf<MaxChildren>* node)
     {
-        return take_node_ref(reinterpret_cast<BNodeCountedGeneric<MaxChildren>*>(node));
+        return take_node_ref(to_node(node));
     }
 
     template<size_t MaxChildren>
@@ -1026,7 +1026,7 @@ namespace RatchetPieceTree
             os_atomic_u128_eval(&blk->free_list.leaf, &old_head.leaf);
             do
             {
-                if (nil_node(old_head.leaf.head))
+                if (old_head.leaf.head == nullptr)
                 {
                     node = nullptr;
                     break;
@@ -1058,7 +1058,7 @@ namespace RatchetPieceTree
 
         size_t numChild = end-begin;
         assert(numChild <= MaxChildren);
-        auto result = reinterpret_cast<NodePtr>(node);
+        auto result = to_node(node);
         std::array<NodeData, MaxChildren>& new_left_children = node->children;
         std::array<Length, MaxChildren>&  new_left_offsets = result->offsets;
         std::array<LFCount, MaxChildren>&  new_left_linefeed = result->lineFeeds;
@@ -1094,7 +1094,7 @@ namespace RatchetPieceTree
             os_atomic_u128_eval(&blk->free_list.leaf, &old_head.leaf);
             do
             {
-                if (nil_node(old_head.leaf.head))
+                if (old_head.leaf.head == nullptr)
                 {
                     node = nullptr;
                     break;
@@ -1126,7 +1126,7 @@ namespace RatchetPieceTree
 
         size_t numChild = end-begin;
         assert(numChild <= MaxChildren);
-        auto result = reinterpret_cast<NodePtr>(node);
+        auto result = to_node(node);
         
         assert(numChild <= MaxChildren);
         NodeVector new_left_children = &node->children[0];
@@ -1153,11 +1153,41 @@ namespace RatchetPieceTree
 
 
     template<size_t MaxChildren>
+    BNodeCountedInternal<MaxChildren>* to_internal_node(BNodeCountedGeneric<MaxChildren>* n)
+    {
+        assert(n->type == NodeType::INTERNAL);
+        return reinterpret_cast<BNodeCountedInternal<MaxChildren>*>(n);
+    }
+    template<size_t MaxChildren>
+    BNodeCountedLeaf<MaxChildren>* to_leaf_node(BNodeCountedGeneric<MaxChildren>* n)
+    {
+        assert(n->type == NodeType::LEAF);
+        return reinterpret_cast<BNodeCountedLeaf<MaxChildren>*>(n);
+    }
+    template<size_t MaxChildren>
+    BNodeCountedGeneric<MaxChildren>* to_node(BNodeCountedGeneric<MaxChildren>* n)
+    {
+        return n;
+    }
+
+    template<size_t MaxChildren>
+    BNodeCountedGeneric<MaxChildren>* to_node(BNodeCountedLeaf<MaxChildren>* n)
+    {
+        return reinterpret_cast<BNodeCountedGeneric<MaxChildren>*>(n);
+    }
+    template<size_t MaxChildren>
+    BNodeCountedGeneric<MaxChildren>* to_node(BNodeCountedInternal<MaxChildren>* n)
+    {
+        return reinterpret_cast<BNodeCountedGeneric<MaxChildren>*>(n);
+    }
+
+
+    template<size_t MaxChildren>
     B_Tree<MaxChildren>::B_Tree(B_Tree<MaxChildren>&& other):
         root_node{ other.root_node },
         tree_depth{ other.tree_depth }
     {
-        other.root_node = reinterpret_cast<NodePtr>(nil_node());
+        other.root_node = nullptr;
     }
 
     template<size_t MaxChildren>
@@ -1213,7 +1243,7 @@ namespace RatchetPieceTree
         }
         assert(root.root_ptr()->childCount > 0);
         assert(root.root_ptr()->childCount <= MaxChildren);
-        INPtr rn = reinterpret_cast<INPtr>(root.root_ptr());
+        INPtr rn = to_internal_node(root.root_ptr());
         auto& children = (rn->children);
         next_layer.assign(&children[0], &children[0]+root.root_ptr()->childCount);
         int layerCount = 2;
@@ -1227,7 +1257,7 @@ namespace RatchetPieceTree
         
                 assert(!(*nodeIt)->isLeaf());
                 assert((*nodeIt)->childCount >= MaxChildren/2);
-                INPtr in = reinterpret_cast<INPtr>(*nodeIt);
+                INPtr in = to_internal_node(*nodeIt);
                 auto& node_children = (in->children);
                 assert((*nodeIt)->offsets.back() == (*nodeIt)->offsets[(*nodeIt)->childCount-1]);
                 assert((*nodeIt)->lineFeeds.back() == (*nodeIt)->lineFeeds[(*nodeIt)->childCount-1]);
@@ -1254,7 +1284,7 @@ namespace RatchetPieceTree
         {
             assert((*nodeIt)->isLeaf());
                 
-            LNPtr ln = reinterpret_cast<LNPtr>(*nodeIt);
+            LNPtr ln = to_leaf_node(*nodeIt);
             auto& node_children = ((ln)->children);
             LFCount prevLineEnd{};
             Length prevOffset{};
@@ -1519,7 +1549,7 @@ namespace RatchetPieceTree
         
         while(!n->isLeaf())
         {
-            StorageTree::InternalNodePtr in = reinterpret_cast<StorageTree::InternalNodePtr>(&node);
+            StorageTree::InternalNodePtr in = to_internal_node(node);
             StorageTree::NodeVector children = (&in->children[0]);
             int i;
             for(i = 0; i < n->childCount;i++)
@@ -1541,7 +1571,7 @@ namespace RatchetPieceTree
                         if(prevNode!=nullptr)
                         {
                             
-                            StorageTree::InternalNodePtr pn = reinterpret_cast<StorageTree::InternalNodePtr>(&node);
+                            StorageTree::InternalNodePtr pn = to_internal_node(node);
                             const StorageTree::NodeVector prevChildren = (&pn->children[0]);
                             prevNode = prevChildren[prevNode->childCount-1];
                         }
@@ -1561,7 +1591,7 @@ namespace RatchetPieceTree
                 n = children[i];
             }
         }
-        StorageTree::LeafNodePtr ln = reinterpret_cast<StorageTree::LeafNodePtr>(n);
+        StorageTree::LeafNodePtr ln = to_leaf_node(n);
 
         NodeData* children = (&ln->children[0]);
         int i;
@@ -1589,7 +1619,7 @@ namespace RatchetPieceTree
             if(prevNode != nullptr)
             {
                 
-                StorageTree::LeafNodePtr pln = reinterpret_cast<StorageTree::LeafNodePtr>(prevNode);
+                StorageTree::LeafNodePtr pln = to_leaf_node(prevNode);
 
                 NodeData* prevChildren = (&pln->children[0]);
                 prevPiece = prevChildren[prevNode->childCount-1].piece;
@@ -1823,12 +1853,13 @@ namespace RatchetPieceTree
         
         while(!node->isLeaf())
         {
-            StorageTree::InternalNodePtr in = reinterpret_cast<StorageTree::InternalNodePtr>(node);
+            StorageTree::InternalNodePtr in = to_internal_node(node);
             StorageTree::NodeVector children = (&in->children[0]);
-            int i = 0;
-            auto it = branchless_lower_bound(in->offsets.begin(), in->offsets.begin()+in->childCount,distance(Offset{node_start_offset}, off));
-            if(it != in->offsets.begin()) it--;
-            for(; i<node->childCount; i++)
+            size_t i = 0;
+            size_t childCount = in->childCount;
+            auto it = branchless_lower_bound(in->offsets.begin(), in->offsets.begin()+childCount, distance(Offset{node_start_offset}, off));
+            //if(it != in->offsets.begin()) it--;
+            for(; i<childCount; i++)
             {
                 if(rep(distance(Offset{node_start_offset}, off)) < rep(node->offsets[i]))
                 {
@@ -1843,19 +1874,29 @@ namespace RatchetPieceTree
                 //node_start_offset += rep(node->offsets[i]);
                 //newline_count += rep(node->lineFeeds[i]);
             }
-            if(i==node->childCount){
-                if(node->childCount>1)
+            
+            if(in->offsets.begin()+i != it)
+            {
+                auto it_index = it - in->offsets.begin();
+                auto val = *it;
+                (void)(val);
+                (void)(it_index);
+                __debugbreak();
+            }
+            if(i == childCount){
+                if(childCount > 1)
                 {
-                    node_start_offset = node_start_offset+ node->offsets[node->childCount-2];
-                    newline_count = extend(newline_count, rep(node->lineFeeds[node->childCount-2]));
+                    node_start_offset = node_start_offset+ node->offsets[childCount-2];
+                    newline_count = extend(newline_count, rep(node->lineFeeds[childCount-2]));
                 }
-                node = children[node->childCount-1];
+                node = children[childCount-1];
             }
         }
-        StorageTree::LeafNodePtr ln = reinterpret_cast<StorageTree::LeafNodePtr>(node);
+        StorageTree::LeafNodePtr ln = to_leaf_node(node);
             
         auto& children = (ln->children);
-        auto it = branchless_lower_bound(ln->offsets.begin(), ln->offsets.begin()+ln->childCount,distance(Offset{node_start_offset}, off));
+        auto it = branchless_lower_bound(ln->offsets.begin(), ln->offsets.begin()+ln->childCount, distance(Offset{node_start_offset}, off));
+        if(it == ln->offsets.begin()+ln->childCount) it--;
         //if(it != ln->offsets.begin()) it--;
         int i = 0;
         for(; i<node->childCount; i++)
@@ -1871,8 +1912,6 @@ namespace RatchetPieceTree
             }
             
         }
-        // if(ln->offsets.begin()+i != it)
-            // __debugbreak();
         if(i>=node->childCount)
         {
             i--;
@@ -1881,6 +1920,14 @@ namespace RatchetPieceTree
                 node_start_offset = node_start_offset + node->offsets[i-1];
                 newline_count = extend(newline_count, rep(node->lineFeeds[i-1]));
             }
+        }
+        if(ln->offsets.begin()+i != it)
+        {
+            auto it_index = it - ln->offsets.begin();
+            auto val = *it;
+            (void)(val);
+            (void)(it_index);
+            __debugbreak();
         }
         Piece result_piece =  children[i].piece;
         //node = children[i].get();
@@ -2059,7 +2106,7 @@ namespace RatchetPieceTree
         
         while(!n->isLeaf())
         {
-            StorageTree::InternalNodePtr in = reinterpret_cast<StorageTree::InternalNodePtr>(n);
+            StorageTree::InternalNodePtr in = to_internal_node(n);
             StorageTree::NodeVector children = (in->children);
             int i;
             for(i = 0; i < n->childCount;i++)
@@ -2087,7 +2134,7 @@ namespace RatchetPieceTree
                 n = children[i];
             }
         }
-        StorageTree::LeafNodePtr ln = reinterpret_cast<StorageTree::LeafNodePtr>(n);
+        StorageTree::LeafNodePtr ln = to_leaf_node(n);
             
         NodeData* children = (&ln->children[0]);
         int i;
@@ -2185,8 +2232,8 @@ namespace RatchetPieceTree
 
         // Allocate the red-black tree block.
         BTreeBlock* rb_tree_blk = Arena::push_array<BTreeBlock>(builder->immutable_buf_arena, 1);
-        rb_tree_blk->free_list.leaf.head = nil_node();
-        rb_tree_blk->free_list.internal.head = nil_node();
+        rb_tree_blk->free_list.leaf.head = nullptr;
+        rb_tree_blk->free_list.internal.head = nullptr;
         rb_tree_blk->alloc_arena = builder->immutable_buf_arena;
 
         BufferCollection buffers{
@@ -2564,7 +2611,7 @@ namespace RatchetPieceTree
         {
             algo_mark(stack[stackCount-1].node, Collect);
             auto &stack_entry = stack[stackCount-1];
-            StorageTree::InternalNodePtr in = reinterpret_cast<StorageTree::InternalNodePtr>(stack_entry.node);
+            StorageTree::InternalNodePtr in = to_internal_node(stack_entry.node);
             StorageTree::NodeVector children = (&in->children[0]);
             Length sublen {0};
             for(stack_entry.index = 0; stack_entry.index< stack_entry.node->childCount; stack_entry.index++)
@@ -2580,7 +2627,7 @@ namespace RatchetPieceTree
                 sublen = subtreelen;
             }
         }
-        StorageTree::LeafNodePtr ln = reinterpret_cast<StorageTree::LeafNodePtr>(stack[stackCount-1].node);
+        StorageTree::LeafNodePtr ln = to_leaf_node(stack[stackCount-1].node);
         NodeData* children = (&ln->children[0]);
         algo_mark(stack[stackCount-1].node, Collect);
         Length sublen {0};
@@ -2627,13 +2674,13 @@ namespace RatchetPieceTree
         {
             algo_mark(stack[stackCount-1].node, Traverse);
             
-            StorageTree::InternalNodePtr in = reinterpret_cast<StorageTree::InternalNodePtr>(stack[stackCount-1].node);
+            StorageTree::InternalNodePtr in = to_internal_node(stack[stackCount-1].node);
             StorageTree::NodeVector children = (&in->children[0]);
             size_t childIndex = stack[stackCount-1].index++;
             stack[stackCount++] = {children[childIndex], 0};
         }
         algo_mark(stack[stackCount-1].node, Traverse);
-        StorageTree::LeafNodePtr ln = reinterpret_cast<StorageTree::LeafNodePtr>(stack[stackCount-1].node);
+        StorageTree::LeafNodePtr ln = to_leaf_node(stack[stackCount-1].node);
         NodeData* leafs = (&ln->children[0]);
         
         auto& piece = leafs[stack[stackCount-1].index++].piece;
@@ -2754,13 +2801,13 @@ namespace RatchetPieceTree
         }
         while(!stack[stackCount-1].node->isLeaf())
         {
-            StorageTree::InternalNodePtr in = reinterpret_cast<StorageTree::InternalNodePtr>(stack[stackCount-1].node);
+            StorageTree::InternalNodePtr in = to_internal_node(stack[stackCount-1].node);
             StorageTree::NodeVector children = (&in->children[0]);
             stack[stackCount-1].index++;
             stack[stackCount++]={children[stack[stackCount].node->childCount - stack[stackCount].index], 0};
         }
 
-        StorageTree::LeafNodePtr ln = reinterpret_cast<StorageTree::LeafNodePtr>(stack[stackCount-1].node);
+        StorageTree::LeafNodePtr ln = to_leaf_node(stack[stackCount-1].node);
         NodeData* leafs = (&ln->children[0]);
 
         stack[stackCount-1].index++;
@@ -2793,16 +2840,17 @@ namespace RatchetPieceTree
         {
             algo_mark(stack[stackCount-1].node, Collect);
             auto &stack_entry = stack[stackCount-1];
-            StorageTree::InternalNodePtr in = reinterpret_cast<StorageTree::InternalNodePtr>(stack_entry.node);
+            StorageTree::InternalNodePtr in = to_internal_node(stack_entry.node);
             StorageTree::NodeVector children = (&in->children[0]);
             Length sublen {0};
+            //TODO branchless_lower_bound
             for(stack_entry.index = 0; stack_entry.index< stack_entry.node->childCount; stack_entry.index++)
             {
                 auto subtreelen = stack_entry.node->offsets[stack_entry.index];
-                if(rep(offset) < rep(subtreelen)+ rep(accumulated))
+                if(rep(offset) < rep(subtreelen) + rep(accumulated))
                 {
                     auto index = stack_entry.index++;
-                    stack_entry.index = stack_entry.node->childCount - index;
+                    stack_entry.index = stack_entry.node->childCount - index+1;
                     stack[stackCount++] = {children[index]};
                     accumulated = accumulated + sublen;
                     break;
@@ -2811,12 +2859,13 @@ namespace RatchetPieceTree
                 sublen = subtreelen;
             }
         }
-        StorageTree::LeafNodePtr ln = reinterpret_cast<StorageTree::LeafNodePtr>(stack[stackCount-1].node);
+        StackEntry *stack_top = &stack[stackCount-1];
+        StorageTree::LeafNodePtr ln = to_leaf_node(stack_top->node);
         NodeData* children = (&ln->children[0]);
-        algo_mark(stack[stackCount-1].node, Collect);
-        for(stack[stackCount-1].index = 0; stack[stackCount-1].index< stack[stackCount-1].node->childCount;stack[stackCount-1].index++)
+        algo_mark(stack_top->node, Collect);
+        for(stack_top->index = 0; stack_top->index< stack_top->node->childCount;stack_top->index++)
         {
-            auto subtreelen = children[stack[stackCount-1].index].piece.length;
+            auto subtreelen = children[stack_top->index].piece.length;
             if(rep(offset) < rep(subtreelen) + rep(accumulated))
             {
                 break;
@@ -2831,6 +2880,12 @@ namespace RatchetPieceTree
         //auto last_offset = buffers->buffer_offset(piece.index, piece.last);
         first_ptr  = buffer->buffer.str + rep(first_offset) + rep(offset)- rep(accumulated) +1;
         last_ptr = buffer->buffer.str + rep(first_offset);
+        
+        for EachIndex(st, stackCount)
+        {
+            //stack[st].index = stack[st].node->childCount - stack[st]+1;
+        }
+        
     }
 }
 
@@ -2845,13 +2900,13 @@ void print_tree(RatchetPieceTree::BNodeCountedGeneric<MaxChildren>* root, const 
     //printf("%.*s  :\n",level, levels);
     if(root->isLeaf()){
         for(int i = 0; i < root->childCount;i++){
-            RatchetPieceTree::StorageTree::LeafNodePtr ln = reinterpret_cast<RatchetPieceTree::StorageTree::LeafNodePtr>(root);
+            RatchetPieceTree::StorageTree::LeafNodePtr ln = to_leaf_node(root);
             print_piece(ln->children[i].piece, tree, level+1);
         }
     }
     else
     {
-        RatchetPieceTree::StorageTree::InternalNodePtr in = reinterpret_cast<RatchetPieceTree::StorageTree::InternalNodePtr>(root);
+        RatchetPieceTree::StorageTree::InternalNodePtr in = to_internal_node(root);
             
         for(int i = 0; i < root->childCount;i++){
              RatchetPieceTree::StorageTree::NodePtr childptr = (in->children)[i];

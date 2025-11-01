@@ -81,7 +81,6 @@ void assume_reverse_buffer(const PieceTree::Tree* tree, String8 forward_buf, Pie
     {
         str8_serial_push_char(scratch.arena, &serial_lst, walker.next());
     }
-    assert(walker.remaining() == PieceTree::Length{ 0 });
 
     String8 buf = str8_serial_end(scratch.arena, serial_lst);
 
@@ -90,6 +89,7 @@ void assume_reverse_buffer(const PieceTree::Tree* tree, String8 forward_buf, Pie
         fprintf(stderr, "reference snapshot buffer string '%.*s' did not match expected value of '%.*s'. Line(%d)\n", int(buf.size), buf.str, int(forward_buf.size), forward_buf.str, locus);
         assert(false);
     }
+    assert(walker.remaining() == PieceTree::Length{ 0 });
 
     // Walk 'forward_buf' in reverse and compare.
     bool result = true;
@@ -885,17 +885,53 @@ void test10()
     Arena::scratch_end(scratch);
 }
 
+String8 hexStr(Arena::Arena* arena, int num, int width)
+{
+    String8 res{};
+    res.str = Arena::push_array<char>(arena, width);
+    res.size = width;
+    auto hex = "0123456789ABCDEF";
+    for EachIndex(i, width)
+    {
+        auto digit = num>>(4*(width-i-1));
+        res.str[i] = hex[digit&0xf];
+    }
+    return res;
+}
+
 void test11()
 {
     auto scratch = Arena::scratch_begin(Arena::no_conflicts);
     Arena::Arena* arena = Arena::alloc(Arena::default_params);
     TreeBuilder builder = tree_builder_start(arena);
-    tree_builder_accept(arena, &builder, str8_mut(str8_literal("Hello, World!")));
+    
+    String8List lst{};
+    str8_serial_begin(scratch.arena, &lst);
 
+    auto fstr = str8_mut(str8_literal("fisrt"));
+    tree_builder_accept(arena, &builder, fstr);
+    str8_serial_push_str8(scratch.arena, &lst, fstr);
+
+    
     for(int i = 0; i< 1000; i++)
-        tree_builder_accept(arena, &builder, str8_mut(str8_literal("Hello, World!")));
+    {
         
+        auto str = str8_mut(str8_literal(" Hello, World!\n"));
+        tree_builder_accept(arena, &builder, str);
+        str8_serial_push_str8(scratch.arena, &lst, str);
+        tree_builder_accept(arena, &builder, hexStr(arena, i, 3));
+        str8_serial_push_str8(scratch.arena, &lst,  hexStr(arena, i, 3));
+        
+    }
+    
+    auto lstr = str8_mut(str8_literal("last"));
+    tree_builder_accept(arena, &builder, lstr);
+    str8_serial_push_str8(scratch.arena, &lst, lstr);
+
     Tree* tree = tree_builder_finish(&builder);
+    String8 fullstr = str8_serial_end(scratch.arena, lst);
+    
+    assume_buffer(tree, String8View{.str = fullstr.str, .size = fullstr.size});
 
     tree->remove(CharOffset{ 14 }, retract(tree->length(),  14*2 ));
     assume_buffer(tree, str8_literal("Hello, World!H!Hello, World!"));
@@ -953,15 +989,17 @@ void test13()
     Arena::Arena* arena = Arena::alloc(Arena::default_params);
     TreeBuilder builder = tree_builder_start(arena);
 
-    for(int i = 0; i< 30; i++)
+    for(int i = 0; i< 16*16*16; i++)
         tree_builder_accept(scratch.arena, &builder, str8_mut(str8_literal("Hello, \rWorld!\r\n")));
 
     Tree* tree = tree_builder_finish(&builder);
     
-    Line range = tree->line_at(Offset(115));
+    Line range = tree->line_at(Offset(rep(tree->length())-115));
     // LineRange range_crlf = tree->get_line_range_crlf(Line(2));
     // LineRange range_with_newline = tree->get_line_range_with_newline(Line(2));
     printf("line=%zd\n", range);
+    assert(range == Line(4089));
+    //assume_lineRange(range, expected_range);
     //printf("range_crlf first=%zd, last=%zd\n", range_crlf.first, range_crlf.last);
     //printf("range_with_newline first=%zd, last=%zd\n", range_with_newline.first, range_with_newline.last);
     
@@ -1019,7 +1057,7 @@ int main()
     printf("test12: allocs=%zd, deallocs=%zd\n", alloc_count, dealloc_count);
     alloc_count=0;dealloc_count=0;
     test13();
-    printf("test12: allocs=%zd, deallocs=%zd\n", alloc_count, dealloc_count);
+    printf("test13: allocs=%zd, deallocs=%zd\n", alloc_count, dealloc_count);
     alloc_count=0;dealloc_count=0;
 
 #ifdef TIMING_DATA
