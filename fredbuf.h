@@ -204,8 +204,8 @@ namespace PieceTree
         friend class ReferenceSnapshot;
 #ifdef TEXTBUF_DEBUG
         friend void print_piece(const Piece& piece, const Tree* tree, int level);
-        friend void print_tree(const Tree& tree);
 #endif // TEXTBUF_DEBUG
+        friend void print_tree(const Tree& tree);
         void internal_insert(CharOffset offset, String8 txt);
         void internal_remove(CharOffset offset, Length count);
 

@@ -1765,7 +1765,7 @@ namespace RatchetPieceTree
         Arena::scratch_end(scratch);
         return res;
     }
-
+#ifdef TEXTBUF_DEBUG
     void print_piece(const RatchetPieceTree::Piece& piece, const RatchetPieceTree::Tree* tree, int level)
     {
         const char* levels = "|||||||||||||||||||||||||||||||";
@@ -1782,7 +1782,13 @@ namespace RatchetPieceTree
     {
         ::print_tree((tree.root.root_ptr()), &tree);
     }
-
+    #else
+        
+    void print_tree(const RatchetPieceTree::Tree& tree)
+    {
+        (void)tree;
+    }
+#endif
     Piece Tree::build_piece(String8 txt)
     {
         auto start_offset = buffers.mod_buffer.buffer.size;
