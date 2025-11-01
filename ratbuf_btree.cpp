@@ -1155,13 +1155,13 @@ namespace RatchetPieceTree
     template<size_t MaxChildren>
     BNodeCountedInternal<MaxChildren>* to_internal_node(BNodeCountedGeneric<MaxChildren>* n)
     {
-        assert(n->type == NodeType::INTERNAL);
+        assert(n == nullptr || n->type == NodeType::INTERNAL);
         return reinterpret_cast<BNodeCountedInternal<MaxChildren>*>(n);
     }
     template<size_t MaxChildren>
     BNodeCountedLeaf<MaxChildren>* to_leaf_node(BNodeCountedGeneric<MaxChildren>* n)
     {
-        assert(n->type == NodeType::LEAF);
+        assert(n == nullptr || n->type == NodeType::LEAF);
         return reinterpret_cast<BNodeCountedLeaf<MaxChildren>*>(n);
     }
     template<size_t MaxChildren>
@@ -2801,10 +2801,11 @@ namespace RatchetPieceTree
         }
         while(!stack[stackCount-1].node->isLeaf())
         {
-            StorageTree::InternalNodePtr in = to_internal_node(stack[stackCount-1].node);
+            auto& stackTop = stack[stackCount-1];
+            StorageTree::InternalNodePtr in = to_internal_node(stackTop.node);
             StorageTree::NodeVector children = (&in->children[0]);
-            stack[stackCount-1].index++;
-            stack[stackCount++]={children[stack[stackCount].node->childCount - stack[stackCount].index], 0};
+            stackTop.index++;
+            stack[stackCount++]={children[stackTop.node->childCount - stackTop.index], 0};
         }
 
         StorageTree::LeafNodePtr ln = to_leaf_node(stack[stackCount-1].node);
@@ -2850,7 +2851,7 @@ namespace RatchetPieceTree
                 if(rep(offset) < rep(subtreelen) + rep(accumulated))
                 {
                     auto index = stack_entry.index++;
-                    stack_entry.index = stack_entry.node->childCount - index+1;
+                    stack_entry.index = stack_entry.node->childCount - index;
                     stack[stackCount++] = {children[index]};
                     accumulated = accumulated + sublen;
                     break;
@@ -2874,11 +2875,11 @@ namespace RatchetPieceTree
         }
 
         auto& piece = children[stack[stackCount-1].index++].piece;
-        stack[stackCount-1].index = stack[stackCount-1].node->childCount - stack[stackCount-1].index+1;
+        stack[stackCount-1].index = stack[stackCount-1].node->childCount - stack[stackCount-1].index + 1;
         auto* buffer = buffers->buffer_at(piece.index);
         auto first_offset = buffers->buffer_offset(piece.index, piece.first);
         //auto last_offset = buffers->buffer_offset(piece.index, piece.last);
-        first_ptr  = buffer->buffer.str + rep(first_offset) + rep(offset)- rep(accumulated) +1;
+        first_ptr  = buffer->buffer.str + rep(first_offset) + rep(offset)- rep(accumulated) + 1;
         last_ptr = buffer->buffer.str + rep(first_offset);
         
         for EachIndex(st, stackCount)
