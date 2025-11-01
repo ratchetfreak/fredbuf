@@ -438,7 +438,6 @@ namespace RatchetPieceTree
         StorageTree root;
         BufferMeta meta;
         CharOffset total_offset = CharOffset{ 0 };
-        //std::vector<StackEntry> stack;
         const char* first_ptr = nullptr;
         const char* last_ptr = nullptr;
     };
