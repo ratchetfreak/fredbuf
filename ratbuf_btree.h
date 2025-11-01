@@ -168,15 +168,6 @@ namespace RatchetPieceTree
         }
     };
 
-    BNodeCounted* nil_node()
-    {
-        return nullptr;
-    }
-    
-    bool nil_node(BNodeCounted* node)
-    {
-        return node == nullptr;
-    }
 
     // Counted node management.
     void dec_node_ref(const BNodeCounted* node);
@@ -195,6 +186,16 @@ namespace RatchetPieceTree
     
     //const BNodeCounted* take_node_ref(const BNodeCounted* node);
     //const BNodeCounted* make_node(BTreeBlock* blk, Color c, const BNodeCounted* lft, const NodeData& data, const BNodeCounted* rgt);
+    template<size_t MaxChildren>
+    BNodeCountedInternal<MaxChildren>* to_internal_node(BNodeCountedGeneric<MaxChildren>* n);
+    template<size_t MaxChildren>
+    BNodeCountedLeaf<MaxChildren>* to_leaf_node(BNodeCountedGeneric<MaxChildren>* n);
+    template<size_t MaxChildren>
+    BNodeCountedGeneric<MaxChildren>* to_node(BNodeCountedGeneric<MaxChildren>* n);
+    template<size_t MaxChildren>
+    BNodeCountedGeneric<MaxChildren>* to_node(BNodeCountedLeaf<MaxChildren>* n);
+    template<size_t MaxChildren>
+    BNodeCountedGeneric<MaxChildren>* to_node(BNodeCountedInternal<MaxChildren>* n);
 
     struct BufferCollection;
 
@@ -207,6 +208,7 @@ namespace RatchetPieceTree
         using NodePtr = BNodeCountedGeneric<MaxChildren>*;
         using InternalNodePtr = BNodeCountedInternal<MaxChildren>*;
         using LeafNodePtr = BNodeCountedLeaf<MaxChildren>*;
+        
         
         using NodeVector = BNodeCountedGeneric<MaxChildren>**;
         using ChildVector =BNodeCountedInternal<MaxChildren>**;
@@ -343,7 +345,7 @@ void algorithm_clear_from(algo_list *lst, algo_marker *marker)
 }
 
 
-#define algo_mark(n, r) algorithm_add(&algorithm, reinterpret_cast<BNodeCountedGeneric<16>*>(n), MarkReason::r)
+#define algo_mark(n, r) algorithm_add(&algorithm, to_node(n), MarkReason::r)
 #else
 #define algo_mark(node, reason) do{}while(0)
 #endif
