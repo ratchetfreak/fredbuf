@@ -1,16 +1,7 @@
 #include "ratbuf.h"
 #include "ratbuf_btree.h"
 
-
 #include <cassert>
-
-//#include <memory>
-//#include <string_view>
-//#include <string>
-//#include <vector>
-//#include <array>
-//#include <sstream>
-
 
 #include "arena.h"
 #include "types.h"
@@ -24,9 +15,6 @@ void print_tree(RatchetPieceTree::BNodeCountedGeneric<MaxChildren>* root, const 
 
 namespace RatchetPieceTree
 {
-    
-    
-    
 #ifdef LOG_ALGORITHM
     Arena::Arena *algo_arena = Arena::alloc(Arena::default_params);
     algo_list algorithm;
@@ -309,7 +297,6 @@ namespace RatchetPieceTree
         
         NodeData* resultch = Arena::push_array<NodeData>(scratch.arena, node->childCount+2);
         size_t resultCount = 0;
-        //std::vector<NodeData> resultch;
 
         auto& children = (node->children);
 
