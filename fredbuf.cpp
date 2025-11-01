@@ -2589,4 +2589,17 @@ void flush()
 {
     fflush(stdout);
 }
+#else
+    
+namespace PieceTree
+{
+    void print_tree(const PieceTree::Tree& tree)
+    {
+        (void) &tree;
+    }
+}
+void print_buffer(const PieceTree::Tree* tree)
+{
+        (void) &tree;
+}
 #endif // TEXTBUF_DEBUG
