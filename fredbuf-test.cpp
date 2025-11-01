@@ -946,6 +946,30 @@ void test12()
 
 }
 
+void test13()
+{
+    
+    auto scratch = Arena::scratch_begin(Arena::no_conflicts);
+    Arena::Arena* arena = Arena::alloc(Arena::default_params);
+    TreeBuilder builder = tree_builder_start(arena);
+
+    for(int i = 0; i< 30; i++)
+        tree_builder_accept(scratch.arena, &builder, str8_mut(str8_literal("Hello, \rWorld!\r\n")));
+
+    Tree* tree = tree_builder_finish(&builder);
+    
+    Line range = tree->line_at(Offset(115));
+    // LineRange range_crlf = tree->get_line_range_crlf(Line(2));
+    // LineRange range_with_newline = tree->get_line_range_with_newline(Line(2));
+    printf("line=%zd\n", range);
+    //printf("range_crlf first=%zd, last=%zd\n", range_crlf.first, range_crlf.last);
+    //printf("range_with_newline first=%zd, last=%zd\n", range_with_newline.first, range_with_newline.last);
+    
+    release_tree(tree);
+    Arena::scratch_end(scratch);
+
+}
+
 
 int main()
 {
@@ -992,6 +1016,9 @@ int main()
     printf("test11: allocs=%zd, deallocs=%zd\n", alloc_count, dealloc_count);
     alloc_count=0;dealloc_count=0;
     test12();
+    printf("test12: allocs=%zd, deallocs=%zd\n", alloc_count, dealloc_count);
+    alloc_count=0;dealloc_count=0;
+    test13();
     printf("test12: allocs=%zd, deallocs=%zd\n", alloc_count, dealloc_count);
     alloc_count=0;dealloc_count=0;
 

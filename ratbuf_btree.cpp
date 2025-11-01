@@ -10,7 +10,7 @@
 //#include <vector>
 //#include <array>
 //#include <sstream>
-#include <bit>
+
 
 #include "arena.h"
 #include "types.h"
@@ -24,8 +24,12 @@ void print_tree(RatchetPieceTree::BNodeCountedGeneric<MaxChildren>* root, const 
 
 namespace RatchetPieceTree
 {
+    
+    
+    
 #ifdef LOG_ALGORITHM
-    std::vector<algo_marker> algorithm;
+    Arena::Arena *algo_arena = Arena::alloc(Arena::default_params);
+    algo_list algorithm;
     constexpr LFCount operator+(LFCount lhs, LFCount rhs)
     {
         return LFCount{ rep(lhs) + rep(rhs) };
@@ -87,10 +91,9 @@ namespace RatchetPieceTree
             
         }
         size_t remaining = leafCount - i;
-        assert(nodeCount>0);
+        
         
         {
-
             nodes[nodeCount++]=(construct_leaf(blk, leafNodes, i, i+remaining/2));
             i+=remaining/2;
             nodes[nodeCount++]=(construct_leaf(blk, leafNodes, i, leafCount));
@@ -301,7 +304,7 @@ namespace RatchetPieceTree
             Arena::Temp scratch = Arena::scratch_begin_vararg(arena, blk->rb_tree_blk->alloc_arena);
             //Arena::Temp scratch = Arena::scratch_begin({&arena, 1});
         auto offsets_end = node->offsets.begin()+node->childCount;
-        auto insertPoint = std::lower_bound(node->offsets.begin(), offsets_end, at);
+        auto insertPoint = branchless_lower_bound(node->offsets.begin(), offsets_end, at);
         auto insertIndex = insertPoint - node->offsets.begin();
         
         NodeData* resultch = Arena::push_array<NodeData>(scratch.arena, node->childCount+2);
@@ -584,33 +587,6 @@ namespace RatchetPieceTree
         return result;
     }
 
-    template<typename It, typename T, typename Cmp>
-    It branchless_lower_bound(It begin, It end, const T & value, Cmp && compare)
-    {
-        size_t length = end - begin;
-        if (length == 0)
-            return end;
-        size_t step = std::bit_floor(length);
-        if (step != length && compare(begin[step], value))
-        {
-            length -= step + 1;
-            if (length == 0)
-                return end;
-            step = std::bit_ceil(length);
-            begin = end - step;
-        }
-        for (step /= 2; step != 0; step /= 2)
-        {
-            if (compare(begin[step], value))
-                begin += step;
-        }
-        return begin + compare(*begin, value);
-    }
-    template<typename It, typename T>
-    It branchless_lower_bound(It begin, It end, const T & value)
-    {
-        return branchless_lower_bound(begin, end, value, std::less<>{});
-    }
 
     void Tree::insert(CharOffset offset, String8 txt, SuppressHistory suppress_history)
     {
@@ -641,7 +617,7 @@ namespace RatchetPieceTree
             InternalNodePtr in = reinterpret_cast<InternalNodePtr>(node);
             NodeVector node_children = (in->children);
             auto offsets_end = node->offsets.begin()+node->childCount;
-            auto insertPoint = std::lower_bound(node->offsets.begin(), offsets_end, at);
+            auto insertPoint = branchless_lower_bound(node->offsets.begin(), offsets_end, at);
             size_t insertIndex = insertPoint - node->offsets.begin();
             auto insertChIt = node_children+insertIndex;
             auto insertChItEnd = node_children+node->childCount;
@@ -1224,18 +1200,26 @@ namespace RatchetPieceTree
         std::vector<NPtr> next_layer;
         
         if(root.is_empty())
+        {
+            assert(root.depth() == 0);
             return;
-        
+        }
         if(root.root_ptr()->isLeaf())
         {
+            assert(root.depth() == 1);
+            assert(root.root_ptr()->childCount > 0);
             assert(root.root_ptr()->childCount <= MaxChildren);
             return;
         }
+        assert(root.root_ptr()->childCount > 0);
+        assert(root.root_ptr()->childCount <= MaxChildren);
         INPtr rn = reinterpret_cast<INPtr>(root.root_ptr());
         auto& children = (rn->children);
         next_layer.assign(&children[0], &children[0]+root.root_ptr()->childCount);
+        int layerCount = 2;
         while(!next_layer.front()->isLeaf())
         {
+            layerCount++;
             layer = std::move(next_layer);
             next_layer.clear();
             for(auto nodeIt = layer.begin(); nodeIt != layer.end();++nodeIt)
@@ -1264,6 +1248,7 @@ namespace RatchetPieceTree
                 next_layer.insert(next_layer.end(), &node_children[0], &node_children[0]+(*nodeIt)->childCount);
             }
         }
+        assert(root.depth() == layerCount);
         layer = std::move(next_layer);
         for(auto nodeIt = layer.begin(); nodeIt != layer.end();++nodeIt)
         {
@@ -1841,6 +1826,8 @@ namespace RatchetPieceTree
             StorageTree::InternalNodePtr in = reinterpret_cast<StorageTree::InternalNodePtr>(node);
             StorageTree::NodeVector children = (&in->children[0]);
             int i = 0;
+            auto it = branchless_lower_bound(in->offsets.begin(), in->offsets.begin()+in->childCount,distance(Offset{node_start_offset}, off));
+            if(it != in->offsets.begin()) it--;
             for(; i<node->childCount; i++)
             {
                 if(rep(distance(Offset{node_start_offset}, off)) < rep(node->offsets[i]))
@@ -1868,6 +1855,8 @@ namespace RatchetPieceTree
         StorageTree::LeafNodePtr ln = reinterpret_cast<StorageTree::LeafNodePtr>(node);
             
         auto& children = (ln->children);
+        auto it = branchless_lower_bound(ln->offsets.begin(), ln->offsets.begin()+ln->childCount,distance(Offset{node_start_offset}, off));
+        //if(it != ln->offsets.begin()) it--;
         int i = 0;
         for(; i<node->childCount; i++)
         {
@@ -1882,6 +1871,8 @@ namespace RatchetPieceTree
             }
             
         }
+        // if(ln->offsets.begin()+i != it)
+            // __debugbreak();
         if(i>=node->childCount)
         {
             i--;

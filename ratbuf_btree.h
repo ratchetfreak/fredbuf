@@ -211,74 +211,6 @@ namespace RatchetPieceTree
         using NodeVector = BNodeCountedGeneric<MaxChildren>**;
         using ChildVector =BNodeCountedInternal<MaxChildren>**;
         using LeafVector  =BNodeCountedLeaf<MaxChildren>**;
-    #if 0
-        struct Node;
-        
-        
-        using NodePtr = std::shared_ptr<const Node>;
-        using ChildArray =std::array<NodePtr, MaxChildren>;
-        using LeafArray =std::array<NodeData, MaxChildren>;
-        struct Node :public std::enable_shared_from_this<Node>
-        {
-            Node(std::array<NodePtr, MaxChildren> chld,
-                std::array<Length, MaxChildren> offsets,
-                std::array<LFCount, MaxChildren> lineFeeds,
-                size_t childCount):
-                    children(std::move(chld)),
-                    offsets(std::move(offsets)),
-                    lineFeeds(lineFeeds),
-                    childCount(childCount)
-            {
-                NEW_NODE_ALLOC();
-                if(childCount < MaxChildren)
-                {
-                    this->offsets.back() = offsets[childCount-1];
-                    this->lineFeeds.back() = lineFeeds[childCount-1];
-                }
-            }
-            Node(std::array<NodeData, MaxChildren> chld,
-                std::array<Length, MaxChildren> offsets,
-                std::array<LFCount, MaxChildren> lineFeeds,
-                size_t childCount):
-                    children(std::move(chld)),
-                    offsets(std::move(offsets)),
-                    lineFeeds(lineFeeds),
-                    childCount(childCount)
-            {
-                NEW_NODE_ALLOC();
-                if(childCount < MaxChildren)
-                {
-                    this->offsets.back() = offsets[childCount-1];
-                    this->lineFeeds.back() = lineFeeds[childCount-1];
-                }
-            }
-            std::variant<ChildArray, LeafArray > children;
-            std::array<Length, MaxChildren> offsets;
-            std::array<LFCount, MaxChildren> lineFeeds;
-            size_t childCount;
-
-#ifdef COUNT_ALLOC
-            ~Node()
-            {
-                NEW_NODE_DEALLOC();
-            }
-#endif
-
-            bool isLeaf ()const{
-                return children.index() != 0;
-            }
-
-            Length subTreeLength() const
-            {
-                return offsets.back();
-            }
-            
-            LFCount subTreeLineFeeds() const
-            {
-                return lineFeeds.back();
-            }
-        };
-        #endif
         explicit B_Tree() = default;
         B_Tree(B_Tree&&);
         B_Tree(const B_Tree&) = delete;
@@ -337,39 +269,6 @@ namespace RatchetPieceTree
 
     };
 
-    template<size_t C>
-    class B_TreeWalker
-    {
-    public:
-        B_TreeWalker(const B_Tree<C>* tree, CharOffset offset = CharOffset{ });
-        B_TreeWalker(const B_TreeWalker&) = delete;
-
-        char current();
-        char next();
-        void seek(CharOffset offset);
-        bool exhausted() const;
-        Length remaining() const;
-        CharOffset offset() const;
-
-        // For Iterator-like behavior.
-        B_TreeWalker & operator++()
-        {
-            next();
-            return *this;
-        }
-
-        char operator*()
-        {
-            return current();
-        }
-        struct StackEntry
-        {
-            B_Tree<C>::NodePtr node;
-            size_t index;
-            Length offset;
-        };
-        std::vector<StackEntry> stack;
-    };
 #ifdef LOG_ALGORITHM
     enum class MarkReason : size_t { None, Traverse, Collect, Made, Skip };
     struct decrefer
@@ -382,15 +281,69 @@ namespace RatchetPieceTree
     
     struct algo_marker
     {
-        std::unique_ptr<BNodeCountedGeneric<16>, decrefer> node;
+        algo_marker* next;
+        BNodeCountedGeneric<16>* node;
         MarkReason reason;
         
     };
-    extern std::vector<algo_marker> algorithm;
+    
+    
+    struct algo_list
+    {
+        algo_marker* first = nullptr;
+        algo_marker* last = nullptr;
+        algo_marker* free_list = nullptr;
+    };
+    extern Arena::Arena *algo_arena;
+    extern algo_list algorithm;
 
-#define algo_mark(n, r) algorithm.push_back(algo_marker{ \
-        .node = std::unique_ptr<BNodeCountedGeneric<16>, decrefer>{take_node_ref(n)}, \
-        .reason = MarkReason::r})
+void algorithm_add(algo_list *lst, BNodeCountedGeneric<16>* node, MarkReason reason)
+{
+    
+    algo_marker* e = lst->free_list;
+    if (e != nullptr)
+    {
+        SLLStackPop(lst->free_list);
+    }
+    else
+    {
+        e = Arena::push_array_no_zero<algo_marker>(algo_arena, 1);
+    }
+    e->next = nullptr;
+    e->node = take_node_ref(node);
+    e->reason = reason;
+    SLLQueuePush(lst->first, lst->last, e);
+}
+
+void algorithm_clear(algo_list *lst)
+{
+    while (not (lst->first != nullptr))
+    {
+        algo_marker *e = SLLQueuePop(lst->first, lst->last);
+        dec_node_ref(e->node);
+        e->next = nullptr;
+        SLLStackPush(lst->free_list, e);
+        
+    }
+}
+
+void algorithm_clear_from(algo_list *lst, algo_marker *marker)
+{
+    lst->last = marker;
+    algo_marker *r = marker->next;
+    while( r != nullptr)
+    {
+        algo_marker *e = r;
+        r = r->next;
+        e->next = nullptr;
+        dec_node_ref(e->node);
+        SLLStackPush(lst->free_list, e);
+    }
+    marker->next = nullptr;
+}
+
+
+#define algo_mark(n, r) algorithm_add(&algorithm, reinterpret_cast<BNodeCountedGeneric<16>*>(n), MarkReason::r)
 #else
 #define algo_mark(node, reason) do{}while(0)
 #endif
