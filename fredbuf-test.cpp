@@ -904,19 +904,22 @@ void test11()
     auto scratch = Arena::scratch_begin(Arena::no_conflicts);
     Arena::Arena* arena = Arena::alloc(Arena::default_params);
     TreeBuilder builder = tree_builder_start(arena);
-    
+    auto str = str8_mut(str8_literal(" Hello, World!\n"));
+    auto ogstr = str8_mut(str8_literal("Hello, World!"));
     String8List lst{};
     str8_serial_begin(scratch.arena, &lst);
+    
+    tree_builder_accept(arena, &builder, ogstr);
+    str8_serial_push_str8(scratch.arena, &lst, ogstr);
+    tree_builder_accept(arena, &builder, ogstr);
+    str8_serial_push_str8(scratch.arena, &lst, ogstr);
 
-    auto fstr = str8_mut(str8_literal("fisrt"));
-    tree_builder_accept(arena, &builder, fstr);
-    str8_serial_push_str8(scratch.arena, &lst, fstr);
+    auto fstr = str8_mut(str8_literal("first"));
 
     
     for(int i = 0; i< 1000; i++)
     {
         
-        auto str = str8_mut(str8_literal(" Hello, World!\n"));
         tree_builder_accept(arena, &builder, str);
         str8_serial_push_str8(scratch.arena, &lst, str);
         tree_builder_accept(arena, &builder, hexStr(arena, i, 3));
@@ -925,8 +928,12 @@ void test11()
     }
     
     auto lstr = str8_mut(str8_literal("last"));
-    tree_builder_accept(arena, &builder, lstr);
-    str8_serial_push_str8(scratch.arena, &lst, lstr);
+
+    tree_builder_accept(arena, &builder, ogstr);
+    str8_serial_push_str8(scratch.arena, &lst, ogstr);
+    tree_builder_accept(arena, &builder, ogstr);
+    str8_serial_push_str8(scratch.arena, &lst, ogstr);
+
 
     Tree* tree = tree_builder_finish(&builder);
     String8 fullstr = str8_serial_end(scratch.arena, lst);
