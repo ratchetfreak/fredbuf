@@ -13,6 +13,90 @@ void zero_bytes(T* x, uint64_t count = 1)
 }
 ENABLE_MEMSET_NON_TRIVIAL_WARNING();
 
+T* SSLMerge(T* a,T* b, Compare cmp)
+{
+    T* res;
+    T** tail = &res;
+    while(a!=nullptr||b!=nullptr)
+    {
+        if(cmp(a, b) < 0)
+        {
+            *tail = a;
+            tail = &a->next;
+            a = a->next;
+            if(a == nullptr)
+            {
+                *tail = b;
+                b = nullptr;
+            }
+        }
+        else
+        {
+            *tail = b;
+            tail = &b->next;
+            b = b->next;
+            if(b == nullptr)
+            {
+                *tail = a;
+                a = nullptr;
+            }
+        }
+    }
+    return res;
+}
+
+template<typename T, class Compare>
+T* SLLSort(T* start, Compare cmp)
+{
+    T*[64] temp{};
+    
+    T* p = start;
+    int count = 0;
+    while(p)
+    {
+        T* n = p;
+        p = p->next;
+        n->next = nullptr;
+        
+        int i = 0;
+        for(; (count>>i)&1; i++)
+        {
+            T* t = temp[i];
+            temp[i] = n;
+            n = t;
+        }
+        if(count)temp[i] = SLLMerge(temp[i], n, cmp);
+        count++;
+    }
+    T* result;
+    for EachIndex(i, 64)
+    {
+        if(temp[i]!=nullptr)
+        {
+            if(result!= nullptr)
+            {
+                result = SLLMerge(temp[i], result, cmp);
+            }
+            else
+            {
+                result = temp[i];
+            }
+        }
+    }
+}
+
+template<typename It, typename T>
+T* SLLtoDLL(T*first)
+{
+    T* last = first;
+    for EachNode(n, first->next)
+    {
+        n->prev = last;
+        last = n;
+        
+    }
+    return last;
+}
 
 template<typename It, typename T>
 It branchless_lower_bound(It begin, It end, const T & value)
