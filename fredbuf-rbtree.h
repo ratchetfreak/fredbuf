@@ -92,23 +92,32 @@ namespace PieceTree
         uint64_t ref_count;
     };
 
-    struct RBNodeCounted
+    struct RBNodePayload
     {
         const RBNodeCounted* left;
         NodeData data;
         const RBNodeCounted* right;
         Color color;
+    };
+
+    struct RBNodeCounted
+    {
+        union
+        {
+            RBNodePayload payload;
+            RBNodeCounted* free_next;
+        };
         RBNodeBlock* blk;
-        RBNodeCounted* next;
     };
 
     inline read_only RBNodeCounted null_node_inst = {
-        .left = &null_node_inst,
-        .data = NodeData{},
-        .right = &null_node_inst,
-        .color = Color::Black,
+        .payload = {
+            .left = &null_node_inst,
+            .data = NodeData{},
+            .right = &null_node_inst,
+            .color = Color::Black,
+        },
         .blk = nullptr,
-        .next = &null_node_inst,
     };
 
     // Counted node management.

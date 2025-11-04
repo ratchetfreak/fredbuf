@@ -35,8 +35,8 @@ namespace PieceTree
         uint64_t count = os_atomic_u64_dec_eval(&node->blk->ref_count);
         if (count == 0)
         {
-            dec_node_ref(node->left);
-            dec_node_ref(node->right);
+            dec_node_ref(node->payload.left);
+            dec_node_ref(node->payload.right);
             // Finally, detach this node and add to the free list atomically.
             RBNodeFreeList old_head{};
             RBNodeFreeList next_head{};
@@ -45,7 +45,7 @@ namespace PieceTree
             RBNodeCounted* mut_node = const_cast<RBNodeCounted*>(node);
             do
             {
-                mut_node->next = old_head.head;
+                mut_node->free_next = old_head.head;
                 next_head.head = mut_node;
                 next_head.tag = old_head.tag + 1;
             } while (not os_atomic_u128_eval_cond_assign(&node->blk->base_blk->free_list, next_head, &old_head));
@@ -78,7 +78,7 @@ namespace PieceTree
                     break;
                 }
                 node = old_head.head;
-                next_head.head = old_head.head->next;
+                next_head.head = old_head.head->free_next;
                 next_head.tag = old_head.tag + 1;
             } while (not os_atomic_u128_eval_cond_assign(&blk->free_list, next_head, &old_head));
             if (not nil_node(node))
@@ -95,13 +95,13 @@ namespace PieceTree
         zero_bytes(node);
         zero_bytes(node_blk);
         // Set pointer trees to null.
-        node->left = node->right = node->next = nil_node();
+        node->payload.left = node->payload.right = nil_node();
         node_blk->base_blk = blk;
 
-        node->left = take_node_ref(lft);
-        node->data = data;
-        node->right = take_node_ref(rgt);
-        node->color = c;
+        node->payload.left = take_node_ref(lft);
+        node->payload.data = data;
+        node->payload.right = take_node_ref(rgt);
+        node->payload.color = c;
         node->blk = node_blk;
         return node;
     }
@@ -139,25 +139,25 @@ namespace PieceTree
     const NodeData& RedBlackTree::root() const
     {
         assert(not is_empty());
-        return root_node->data;
+        return root_node->payload.data;
     }
 
     RedBlackTree RedBlackTree::left() const
     {
         assert(not is_empty());
-        return RedBlackTree(root_node->left);
+        return RedBlackTree(root_node->payload.left);
     }
 
     RedBlackTree RedBlackTree::right() const
     {
         assert(not is_empty());
-        return RedBlackTree(root_node->right);
+        return RedBlackTree(root_node->payload.right);
     }
 
     Color RedBlackTree::root_color() const
     {
         assert(!is_empty());
-        return root_node->color;
+        return root_node->payload.color;
     }
 
     RedBlackTree RedBlackTree::insert(RBTreeBlock* blk, const NodeData& x, Offset at) const
@@ -2223,7 +2223,7 @@ namespace PieceTree
         // We descended into a null child, we're done.
         if (nil_node(entry->node))
             return true;
-        if (entry->dir == Direction::Right and nil_node(entry->node->right))
+        if (entry->dir == Direction::Right and nil_node(entry->node->payload.right))
             return true;
         return false;
     }
@@ -2247,9 +2247,9 @@ namespace PieceTree
         auto& [nxt, node, dir] = *walker_stack_top(stack);
         if (dir == Direction::Left)
         {
-            if (not nil_node(node->left))
+            if (not nil_node(node->payload.left))
             {
-                const RBNodeCounted* left = node->left;
+                const RBNodeCounted* left = node->payload.left;
                 // Change the dir for when we pop back.
                 walker_stack_top(stack)->dir = Direction::Center;
                 walker_stack_push(arena, &stack, left, Direction::Left);
@@ -2263,7 +2263,7 @@ namespace PieceTree
 
         if (dir == Direction::Center)
         {
-            auto& piece = node->data.piece;
+            auto& piece = node->payload.data.piece;
             auto* buffer = buffers->buffer_at(piece.index);
             auto first_offset = buffers->buffer_offset(piece.index, piece.first);
             auto last_offset = buffers->buffer_offset(piece.index, piece.last);
@@ -2275,7 +2275,7 @@ namespace PieceTree
         }
 
         assert(dir == Direction::Right);
-        const RBNodeCounted* right = node->right;
+        const RBNodeCounted* right = node->payload.right;
         walker_stack_pop(&stack);
         walker_stack_push(arena, &stack, right, Direction::Left);
         populate_ptrs();
@@ -2286,20 +2286,20 @@ namespace PieceTree
         const RBNodeCounted* node = root.root_ptr();
         while (not nil_node(node))
         {
-            if (rep(node->data.left_subtree_length) > rep(offset))
+            if (rep(node->payload.data.left_subtree_length) > rep(offset))
             {
                 // For when we revisit this node.
                 walker_stack_top(stack)->dir = Direction::Center;
-                node = node->left;
+                node = node->payload.left;
                 walker_stack_push(arena, &stack, node, Direction::Left);
             }
             // It is inside this node.
-            else if (rep(node->data.left_subtree_length + node->data.piece.length) > rep(offset))
+            else if (rep(node->payload.data.left_subtree_length + node->payload.data.piece.length) > rep(offset))
             {
                 walker_stack_top(stack)->dir = Direction::Right;
                 // Make the offset relative to this piece.
-                offset = retract(offset, rep(node->data.left_subtree_length));
-                auto& piece = node->data.piece;
+                offset = retract(offset, rep(node->payload.data.left_subtree_length));
+                auto& piece = node->payload.data.piece;
                 auto* buffer = buffers->buffer_at(piece.index);
                 auto first_offset = buffers->buffer_offset(piece.index, piece.first);
                 auto last_offset = buffers->buffer_offset(piece.index, piece.last);
@@ -2312,9 +2312,9 @@ namespace PieceTree
                 assert(not walker_stack_empty(stack));
                 // This parent is no longer relevant.
                 walker_stack_pop(&stack);
-                auto offset_amount = rep(node->data.left_subtree_length + node->data.piece.length);
+                auto offset_amount = rep(node->payload.data.left_subtree_length + node->payload.data.piece.length);
                 offset = retract(offset, offset_amount);
-                node = node->right;
+                node = node->payload.right;
                 walker_stack_push(arena, &stack, node, Direction::Left);
             }
         }
@@ -2413,7 +2413,7 @@ namespace PieceTree
         if (nil_node(entry->node))
             return true;
         // Do we need this check for reverse iterators?
-        if (entry->dir == Direction::Left and nil_node(entry->node->left))
+        if (entry->dir == Direction::Left and nil_node(entry->node->payload.left))
             return true;
         return false;
     }
@@ -2437,9 +2437,9 @@ namespace PieceTree
         auto& [nxt, node, dir] = *walker_stack_top(stack);
         if (dir == Direction::Right)
         {
-            if (not nil_node(node->right))
+            if (not nil_node(node->payload.right))
             {
-                const RBNodeCounted* right = node->right;
+                const RBNodeCounted* right = node->payload.right;
                 // Change the dir for when we pop back.
                 walker_stack_top(stack)->dir = Direction::Center;
                 walker_stack_push(arena, &stack, right, Direction::Right);
@@ -2453,7 +2453,7 @@ namespace PieceTree
 
         if (dir == Direction::Center)
         {
-            auto& piece = node->data.piece;
+            auto& piece = node->payload.data.piece;
             auto* buffer = buffers->buffer_at(piece.index);
             auto first_offset = buffers->buffer_offset(piece.index, piece.first);
             auto last_offset = buffers->buffer_offset(piece.index, piece.last);
@@ -2465,7 +2465,7 @@ namespace PieceTree
         }
 
         assert(dir == Direction::Left);
-        const RBNodeCounted* left = node->left;
+        const RBNodeCounted* left = node->payload.left;
         walker_stack_pop(&stack);
         walker_stack_push(arena, &stack, left, Direction::Right);
         populate_ptrs();
@@ -2476,21 +2476,21 @@ namespace PieceTree
         const RBNodeCounted* node = root.root_ptr();
         while (not nil_node(node))
         {
-            if (rep(node->data.left_subtree_length) > rep(offset))
+            if (rep(node->payload.data.left_subtree_length) > rep(offset))
             {
                 assert(not walker_stack_empty(stack));
                 // This parent is no longer relevant.
                 walker_stack_pop(&stack);
-                node = node->left;
+                node = node->payload.left;
                 walker_stack_push(arena, &stack, node, Direction::Right);
             }
             // It is inside this node.
-            else if (rep(node->data.left_subtree_length + node->data.piece.length) > rep(offset))
+            else if (rep(node->payload.data.left_subtree_length + node->payload.data.piece.length) > rep(offset))
             {
                 walker_stack_top(stack)->dir = Direction::Left;
                 // Make the offset relative to this piece.
-                offset = retract(offset, rep(node->data.left_subtree_length));
-                auto& piece = node->data.piece;
+                offset = retract(offset, rep(node->payload.data.left_subtree_length));
+                auto& piece = node->payload.data.piece;
                 auto* buffer = buffers->buffer_at(piece.index);
                 auto first_offset = buffers->buffer_offset(piece.index, piece.first);
                 last_ptr = buffer->buffer.str + rep(first_offset);
@@ -2503,9 +2503,9 @@ namespace PieceTree
             {
                 // For when we revisit this node.
                 walker_stack_top(stack)->dir = Direction::Center;
-                auto offset_amount = rep(node->data.left_subtree_length + node->data.piece.length);
+                auto offset_amount = rep(node->payload.data.left_subtree_length + node->payload.data.piece.length);
                 offset = retract(offset, offset_amount);
-                node = node->right;
+                node = node->payload.right;
                 walker_stack_push(arena, &stack, node, Direction::Right);
             }
         }
