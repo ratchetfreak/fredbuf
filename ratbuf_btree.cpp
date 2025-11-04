@@ -687,6 +687,16 @@ namespace RatchetPieceTree
             Arena::scratch_end(scratch);
             return remove_from_leafs(arena, blk, to_leaf_node(a), to_leaf_node(b), to_leaf_node(c), at, len);
         }
+        else if(c==nullptr && b == nullptr && a->childCount<=3)
+        {
+            Arena::scratch_end(scratch);
+            InternalNodePtr ina = to_internal_node(a);
+            return remove_from(arena, blk, 
+                        ina->children[0], 
+                        (a->childCount>1)?ina->children[1]:nullptr, 
+                        (a->childCount>2)?ina->children[2]:nullptr, 
+                        at, len);
+        }
         else
         {
             size_t totalChildCount = (a?a->childCount:0)+(b?b->childCount:0)+(c?c->childCount:0);
@@ -694,26 +704,44 @@ namespace RatchetPieceTree
             assert(!c || !c->isLeaf());
             NodeVector resultChildren = Arena::push_array<NodePtr>(scratch.arena, totalChildCount+3);
             size_t childCount = 0;
-            NodeVector allChildren = Arena::push_array<NodePtr>(scratch.arena, totalChildCount);
+            //allocate extra at head and nill it to skip bounds checks later
+            NodeVector allChildren = Arena::push_array<NodePtr>(scratch.arena, totalChildCount+3)+3;
+            Length* allOffsets = Arena::push_array<Length>(scratch.arena, totalChildCount+3)+3;
 
             {
                 InternalNodePtr ina = to_internal_node(a);
                 NodeVector chA = (ina->children);
                 auto outputIt = allChildren;
-                outputIt = std::copy_n(chA, a->childCount, outputIt);
+                auto offsetsOutIt = allOffsets;
                 totalChildCount = a->childCount;
+                outputIt = std::copy_n(chA, a->childCount, outputIt);
+                for EachIndex(i, a->childCount)
+                {
+                    *offsetsOutIt++ = a->offsets[i];
+                }
+                auto total_offset = a->offsets[a->childCount-1];
                 if(b!=nullptr)
                 {
                     InternalNodePtr inb = to_internal_node(b);
                     NodeVector chB = (inb->children);
                     outputIt = std::copy_n(chB, b->childCount, outputIt);
+                    for EachIndex(i, b->childCount)
+                    {
+                        *offsetsOutIt++ = total_offset + b->offsets[i];
+                    }
                     totalChildCount = totalChildCount + b->childCount;
+                    total_offset = total_offset+ b->offsets[b->childCount-1];
                 }
+                
                 if(c!=nullptr)
                 {
                     InternalNodePtr inc = to_internal_node(c);
                     NodeVector chC = (inc->children);
                     outputIt = std::copy_n(chC, c->childCount, outputIt);
+                    for EachIndex(i, c->childCount)
+                    {
+                        *offsetsOutIt++ = total_offset + c->offsets[i];
+                    }
                     totalChildCount = totalChildCount + c->childCount;
                 }
             }
@@ -726,33 +754,26 @@ namespace RatchetPieceTree
             Length aplusbplusc {0};
             int i = 0;
             for(; i<totalChildCount &&
-                    allChildren[i]->subTreeLength() + aplusbplusc < offset;i++)
+                    allOffsets[i] < offset;i++)
             {
-                if(recA)
-                {
-                    offset = offset - recA->subTreeLength();
-                    resultChildren[childCount++] = take_node_ref(recA);
-                }
-                recA = recB;
-                recB = recC;
-                recC = allChildren[i];
-                aplusbplusc = (recA?recA->subTreeLength():Length{0})+
-                        (recB?recB->subTreeLength():Length{0})+
-                        recC->subTreeLength();
             }
-            //now allChildren[i] is the first node that needs removing anything
             
-            if(recA)
+            
+            offset = offset - allOffsets[i-2];
+            
+            //now allChildren[i] is the first node that needs removing anything
+            for (int64_t j = 0; j < (i-2); j += 1)
             {
-                offset = offset - recA->subTreeLength();
-                resultChildren[childCount++] = take_node_ref(recA);
+                resultChildren[childCount++] = take_node_ref(allChildren[j]);
+                algo_mark(allChildren[i], Skip);
             }
-            recA = recB;
-            recB = recC;
+            
+            
+            recA = allChildren[i-2];
+            recB = allChildren[i-1];
             recC = allChildren[i];
-            aplusbplusc = (recA?recA->subTreeLength():Length{0})+
-                        (recB?recB->subTreeLength():Length{0})+
-                        recC->subTreeLength();
+            aplusbplusc =  allOffsets[i] - allOffsets[i-2];
+            
             Length to_remove_from_first_found = aplusbplusc - offset;
             i++;
             TreeManipResult res;
@@ -763,29 +784,12 @@ namespace RatchetPieceTree
             {
                 //everything to be removed is in recC, ensure recA and recB are filled
 
-                while(!recA)
+                if(i < 3)
                 {
-                    if(i >= totalChildCount)
-                    {
-                        //end of array and not enough to fill a node
-                        assert(c==nullptr);
-                        if(recB)
-                        {
-                            Arena::scratch_end(scratch);
-                            return remove_from(arena, blk, recB, recC, nullptr, offset, len);
-                        }
-                        else
-                        {
-                            Arena::scratch_end(scratch);
-                            return remove_from(arena, blk, recC, nullptr, nullptr, offset, len);
-                        }
-                    }
-                    recA = recB;
-                    recB = recC;
-                    recC = allChildren[i];
-                    i++;
-                    algo_mark(recC, Traverse);
-
+                    recA = allChildren[0];
+                    recB = allChildren[1];
+                    recC = allChildren[2];
+                    i = 3;
                 }
                 res = remove_from(scratch.arena, blk, recA, recB, recC, offset, len);
             }
@@ -793,15 +797,16 @@ namespace RatchetPieceTree
             {
                 Length to_remove_from_rest = len - to_remove_from_first_found;
 
+                auto streelen = (allOffsets[i]-allOffsets[i-1]);
                 for(;i< totalChildCount &&
-                        allChildren[i]->subTreeLength() < to_remove_from_rest;i++)
+                        streelen < to_remove_from_rest;i++)
                 {
-                    to_remove_from_rest = to_remove_from_rest - allChildren[i]->subTreeLength();
-                    algo_mark(allChildren[i], Skip);
+                    to_remove_from_rest = to_remove_from_rest - 
+                            (allOffsets[i]-allOffsets[i-1]);
+                    streelen = (allOffsets[i+1]-allOffsets[i]);
+                            //allChildren[i]->subTreeLength();
+                    algo_mark(allChildren[i], Collect);
                 }
-
-                //now allChildren[i] is the last child to remove anything from
-
                 if(i >= totalChildCount && !recA)
                 {
                     //end of array and not enough to fill a node
@@ -817,7 +822,7 @@ namespace RatchetPieceTree
                         return remove_from(arena, blk, recC, nullptr, nullptr, offset, to_remove_from_first_found + to_remove_from_rest);
                     }
                 }
-
+                //now allChildren[i] is the last child to remove anything from
                 if(i < totalChildCount)
                 {
                     if(recA)
@@ -837,7 +842,9 @@ namespace RatchetPieceTree
                 {
                     if(i >= totalChildCount)
                     {
+                        
                         //end of array and not enough to fill a node
+                        //can only happen at root
                         assert(c==nullptr);
                         if(recB)
                         {
@@ -856,7 +863,6 @@ namespace RatchetPieceTree
                     i++;
                     
                     algo_mark(recC, Traverse);
-
                 }
                 res = remove_from(scratch.arena, blk, recA, recB, recC, offset, to_remove_from_first_found + to_remove_from_rest);
             }

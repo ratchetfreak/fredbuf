@@ -13,11 +13,12 @@ void zero_bytes(T* x, uint64_t count = 1)
 }
 ENABLE_MEMSET_NON_TRIVIAL_WARNING();
 
+template<typename T, class Compare>
 T* SSLMerge(T* a,T* b, Compare cmp)
 {
     T* res;
     T** tail = &res;
-    while(a!=nullptr||b!=nullptr)
+    while(a!=nullptr&&b!=nullptr)
     {
         if(cmp(a, b) < 0)
         {
@@ -42,13 +43,21 @@ T* SSLMerge(T* a,T* b, Compare cmp)
             }
         }
     }
+    if(a != nullptr)
+    {
+        *tail = a;
+    }
+    else
+    {
+        *tail = b;
+    }
     return res;
 }
 
 template<typename T, class Compare>
 T* SLLSort(T* start, Compare cmp)
 {
-    T*[64] temp{};
+    T* temp[64]{};
     
     T* p = start;
     int count = 0;
@@ -65,13 +74,20 @@ T* SLLSort(T* start, Compare cmp)
             temp[i] = n;
             n = t;
         }
-        if(count)temp[i] = SLLMerge(temp[i], n, cmp);
+        if(temp[i] !=nullptr)
+        {
+            temp[i] = SLLMerge(temp[i], n, cmp);
+        }
+        else 
+        {
+            temp[i] = n;
+        }
         count++;
     }
-    T* result;
+    T* result = nullptr;
     for EachIndex(i, 64)
     {
-        if(temp[i]!=nullptr)
+        if(temp[i] != nullptr)
         {
             if(result!= nullptr)
             {
@@ -83,6 +99,7 @@ T* SLLSort(T* start, Compare cmp)
             }
         }
     }
+    return result;
 }
 
 template<typename It, typename T>
