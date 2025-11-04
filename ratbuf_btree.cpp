@@ -759,22 +759,24 @@ namespace RatchetPieceTree
             }
             
             
-            offset = offset - allOffsets[i-2];
+            auto newoffset = offset - allOffsets[i-3];
             
             //now allChildren[i] is the first node that needs removing anything
             for (int64_t j = 0; j < (i-2); j += 1)
             {
                 resultChildren[childCount++] = take_node_ref(allChildren[j]);
-                algo_mark(allChildren[i], Skip);
+                algo_mark(allChildren[j], Skip);
             }
             
+            auto start_offset = allOffsets[i-3];
+            (void) start_offset;
             
             recA = allChildren[i-2];
             recB = allChildren[i-1];
             recC = allChildren[i];
-            aplusbplusc =  allOffsets[i] - allOffsets[i-2];
+            aplusbplusc =  allOffsets[i] - allOffsets[i-3];
             
-            Length to_remove_from_first_found = aplusbplusc - offset;
+            Length to_remove_from_first_found = aplusbplusc - newoffset;
             i++;
             TreeManipResult res;
             
@@ -790,11 +792,13 @@ namespace RatchetPieceTree
                     recB = allChildren[1];
                     recC = allChildren[2];
                     i = 3;
+                    newoffset = offset;
                 }
-                res = remove_from(scratch.arena, blk, recA, recB, recC, offset, len);
+                res = remove_from(scratch.arena, blk, recA, recB, recC, newoffset, len);
             }
             else
             {
+                offset = newoffset;
                 Length to_remove_from_rest = len - to_remove_from_first_found;
 
                 auto streelen = (allOffsets[i]-allOffsets[i-1]);
