@@ -391,6 +391,9 @@ namespace RatchetPieceTree
         TreeWalker(const TreeWalker&) = delete;
 
         char current() const;
+        Piece& curr_piece(){
+            return current_piece;
+        };
         char next();
         void seek(CharOffset offset);
         bool exhausted() const;
@@ -434,6 +437,7 @@ namespace RatchetPieceTree
         CharOffset total_offset = CharOffset{ 0 };
         const char* first_ptr = nullptr;
         const char* last_ptr = nullptr;
+        Piece current_piece;
     };
 
     class ReverseTreeWalker

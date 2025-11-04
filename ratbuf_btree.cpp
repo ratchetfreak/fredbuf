@@ -2657,6 +2657,7 @@ namespace RatchetPieceTree
         auto last_offset = buffers->buffer_offset(piece.index, piece.last);
         first_ptr = buffer->buffer.str + rep(first_offset) + rep(offset) - rep(accumulated);
         last_ptr = buffer->buffer.str + rep(last_offset);
+        current_piece = piece;
     }
 
     void TreeWalker::fast_forward_to(CharOffset offset)
@@ -2692,6 +2693,7 @@ namespace RatchetPieceTree
         auto last_offset = buffers->buffer_offset(piece.index, piece.last);
         first_ptr = buffer->buffer.str + rep(first_offset);
         last_ptr = buffer->buffer.str + rep(last_offset);
+        current_piece = piece;
     }
 
     Length TreeWalker::remaining() const

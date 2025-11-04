@@ -395,7 +395,11 @@ namespace PieceTree
         TreeWalker(const TreeWalker&) = delete;
 
         char current();
+        Piece& curr_piece(){
+            return current_piece;
+        };
         char next();
+        void next_piece();
         void seek(CharOffset offset);
         bool exhausted() const;
         Length remaining() const;
@@ -415,6 +419,7 @@ namespace PieceTree
         CharOffset total_offset = CharOffset{ 0 };
         const char* first_ptr = nullptr;
         const char* last_ptr = nullptr;
+        Piece current_piece;
     };
 
     class ReverseTreeWalker

@@ -9,7 +9,7 @@
 
 
 #ifndef NDEBUG
-//#define LOG_ALGORITHM
+#define LOG_ALGORITHM
 #endif // NDEBUG
 namespace RatchetPieceTree
 {
@@ -180,8 +180,6 @@ namespace RatchetPieceTree
     template<size_t MaxChildren>
     BNodeCountedGeneric<MaxChildren>* take_node_ref( BNodeCountedLeaf<MaxChildren>* node);
     
-    //const BNodeCounted* take_node_ref(const BNodeCounted* node);
-    //const BNodeCounted* make_node(BTreeBlock* blk, Color c, const BNodeCounted* lft, const NodeData& data, const BNodeCounted* rgt);
     template<size_t MaxChildren>
     BNodeCountedInternal<MaxChildren>* to_internal_node(BNodeCountedGeneric<MaxChildren>* n);
     template<size_t MaxChildren>
@@ -317,12 +315,15 @@ void algorithm_clear(algo_list *lst)
 {
     while (not (lst->first != nullptr))
     {
-        algo_marker *e = SLLQueuePop(lst->first, lst->last);
+        algo_marker *e = lst->first;
+        SLLQueuePop(lst->first, lst->last);
         dec_node_ref(e->node);
         e->next = nullptr;
         SLLStackPush(lst->free_list, e);
         
     }
+    lst->first = nullptr;
+    lst->last = nullptr;
 }
 
 void algorithm_clear_from(algo_list *lst, algo_marker *marker)

@@ -2194,6 +2194,14 @@ namespace PieceTree
         total_offset = total_offset + Length{ 1 };
         return *first_ptr++;
     }
+    
+    void TreeWalker::next_piece()
+    {
+        first_ptr = last_ptr;
+        next();
+    }
+    
+    
 
     char TreeWalker::current()
     {
@@ -2278,6 +2286,7 @@ namespace PieceTree
             first_ptr = buffer->buffer.str + rep(first_offset);
             last_ptr = buffer->buffer.str + rep(last_offset);
             // Change this direction.
+            current_piece = piece;
             walker_stack_top(stack)->dir = Direction::Right;
             return;
         }
@@ -2313,6 +2322,7 @@ namespace PieceTree
                 auto last_offset = buffers->buffer_offset(piece.index, piece.last);
                 first_ptr = buffer->buffer.str + rep(first_offset) + rep(offset);
                 last_ptr = buffer->buffer.str + rep(last_offset);
+                current_piece = piece;
                 return;
             }
             else
