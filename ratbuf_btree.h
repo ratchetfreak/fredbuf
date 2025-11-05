@@ -328,6 +328,7 @@ void algorithm_clear(algo_list *lst)
 
 void algorithm_clear_from(algo_list *lst, algo_marker *marker)
 {
+    if(marker == nullptr) return;
     lst->last = marker;
     algo_marker *r = marker->next;
     while( r != nullptr)

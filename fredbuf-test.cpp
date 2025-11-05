@@ -676,6 +676,9 @@ struct Stopwatch
 void time_buffer()
 {
     Stopwatch sw;
+    size_t positions[] = {11, 53, 98, 167, 233, 166, 45, 156, 139, 298, 150, 284, 126, 128, 92, 169, 248, 176, 72, 140, 279, 43, 127, 33, 190, 247, 184, 160, 180, 271, 234, 263, 163, 93, 173, 110, 13, 243, 244, 192, 105, 86, 37, 141, 3, 107, 7, 235, 143, 62, 281, 265, 214, 299, 283, 80, 21, 225, 4, 25, 270, 230, 90, 300, 134, 289, 57, 186, 153, 195, 191, 147, 97, 120, 220, 206, 87, 276, 280, 295, 54, 215, 149, 82, 185, 203, 116, 71, 272, 42, 291, 100, 207, 59, 136, 168, 2, 277, 23, 83};
+    size_t lengths[] = {4, 3, 4, 4, 3, 2, 2, 2, 5, 2, 1, 4, 4, 3, 4, 4, 1, 3, 1, 5, 5, 4, 4, 5, 4, 5, 2, 3, 4, 5, 4, 3, 3, 1, 1, 1, 4, 4, 5, 5, 1, 1, 1, 4, 4, 1, 2, 3, 3, 1, 2, 1, 4, 4, 2, 4, 5, 5, 1, 4, 1, 1, 3, 1, 2, 5, 1, 3, 3, 5, 4, 5, 1, 1, 5, 3, 2, 3, 3, 5, 3, 4, 2, 4, 3, 3, 1, 4, 4, 1, 1, 3, 2, 2, 3, 5, 4, 2, 3, 5,};
+    uint8_t types[] = { 0, 1, 0, 0, 1, 0, 0, 0, 1, 0, 1, 1, 1, 1, 0, 0, 0, 1, 0, 1, 1, 1, 0, 1, 0, 1, 0, 0, 1, 0, 1, 0, 1, 1, 1, 0, 0, 1, 0, 0, 1, 0, 1, 0, 1, 1, 1, 1, 1, 0, 1, 1, 1, 0, 0, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 1, 0, 1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 0, 1, 1, 0, 1, 1, 0, 1, 1, 1, 1, 0, 0, 0, 1, 0, 0, 1, 0,};
     constexpr String8View initial_input = str8_literal(
 R"(What is Lorem Ipsum?
 Lorem Ipsum is simply dummy text of the printing and typesetting industry. Lorem Ipsum has been the industry's standard dummy text ever since the 1500s,
@@ -701,6 +704,20 @@ passages, and more recently with desktop publishing software like Aldus PageMake
     tree_builder_accept(scratch.arena, &builder, str8_mut(initial_input));
     Tree* tree = tree_builder_finish(&builder);
 
+    for EachIndex(it, sizeof(types))
+    {
+        if(types[it])
+        {
+            String8 ins_txt = str8_mut(str8_literal("aaaaaa"));
+            ins_txt.size = lengths[it];
+            tree->insert(Offset{positions[it]}, ins_txt, SuppressHistory::Yes);
+        }
+        else
+        {
+            tree->remove(Offset{positions[it]}, Length{lengths[it]}, SuppressHistory::Yes);
+        }
+    }
+
     // Do not let initial_commit escape to the release of the tree.
     {
         auto initial_commit = tree->head();
@@ -722,7 +739,7 @@ passages, and more recently with desktop publishing software like Aldus PageMake
                 }
                 sw.stop();
                 timing_data[i] = sw.to_us();
-                assume_buffer(tree, inserted_buf_expected);
+                //assume_buffer(tree, inserted_buf_expected);
             }
             // Aggregate and display.
             printf("---------- Append-like insertions ----------\n");
@@ -752,7 +769,7 @@ passages, and more recently with desktop publishing software like Aldus PageMake
                 }
                 sw.stop();
                 timing_data[i] = sw.to_us();
-                assume_buffer(tree, inserted_buf_expected);
+                //assume_buffer(tree, inserted_buf_expected);
             }
             // Aggregate and display.
             printf("---------- In-place insertions ----------\n");
@@ -782,7 +799,7 @@ passages, and more recently with desktop publishing software like Aldus PageMake
                 }
                 sw.stop();
                 timing_data[i] = sw.to_us();
-                assume_buffer(tree, upper_half);
+                //assume_buffer(tree, upper_half);
             }
             // Aggregate and display.
             printf("---------- Deletion starting at middle ----------\n");
@@ -813,7 +830,7 @@ passages, and more recently with desktop publishing software like Aldus PageMake
                 }
                 sw.stop();
                 timing_data[i] = sw.to_us();
-                assume_buffer(tree, upper_half);
+                //assume_buffer(tree, upper_half);
             }
             // Aggregate and display.
             printf("---------- Deletion starting at beginning ----------\n");
