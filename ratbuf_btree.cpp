@@ -289,8 +289,8 @@ namespace RatchetPieceTree
             
             return res;
         }
-            Arena::Temp scratch = Arena::scratch_begin_vararg(arena, blk->rb_tree_blk->alloc_arena);
-            //Arena::Temp scratch = Arena::scratch_begin({&arena, 1});
+        Arena::Temp scratch = Arena::scratch_begin_vararg(arena, blk->rb_tree_blk->alloc_arena);
+        //Arena::Temp scratch = Arena::scratch_begin({&arena, 1});
         auto offsets_end = node->offsets.begin()+node->childCount;
         auto insertPoint = branchless_lower_bound(node->offsets.begin(), offsets_end, at);
         auto insertIndex = insertPoint - node->offsets.begin();
@@ -671,9 +671,6 @@ namespace RatchetPieceTree
     template<size_t MaxChildren>
     B_Tree<MaxChildren>::TreeManipResult B_Tree<MaxChildren>::remove_from(Arena::Arena *arena, BufferCollection* blk, NodePtr a, NodePtr b, NodePtr c, Length at, Length len) const
     {
-        Arena::Temp scratch = Arena::scratch_begin_vararg(arena, blk->rb_tree_blk->alloc_arena);
-        //Arena::Temp scratch = Arena::scratch_begin({&arena, 1});
-        
         // at least one of a and c should not participate in the remove
         // that way the result is always big enough to make at least 1 node
         if(a)algo_mark(a, Collect);
@@ -684,21 +681,32 @@ namespace RatchetPieceTree
         {
             assert(!b || b->isLeaf());
             assert(!c || c->isLeaf());
-            Arena::scratch_end(scratch);
+            
             return remove_from_leafs(arena, blk, to_leaf_node(a), to_leaf_node(b), to_leaf_node(c), at, len);
         }
         else if(c==nullptr && b == nullptr && a->childCount<=3)
         {
-            Arena::scratch_end(scratch);
             InternalNodePtr ina = to_internal_node(a);
-            return remove_from(arena, blk, 
-                        ina->children[0], 
-                        (a->childCount>1)?ina->children[1]:nullptr, 
-                        (a->childCount>2)?ina->children[2]:nullptr, 
-                        at, len);
+            if(a->childCount==3 && 
+                    at < ina->offsets[0] && 
+                    (extend(at, rep(len))) > ina->offsets[1] )
+                return remove_from(arena, blk, 
+                    ina->children[0], 
+                    (a->childCount>2)?ina->children[2]:nullptr, 
+                    nullptr,
+                    at, retract(len, rep(ina->offsets[1]- ina->offsets[0])));
+            else
+                return remove_from(arena, blk, 
+                    ina->children[0], 
+                    (a->childCount>1)?ina->children[1]:nullptr, 
+                    (a->childCount>2)?ina->children[2]:nullptr, 
+                    at, len);
         }
         else
         {
+            Arena::Temp scratch = Arena::scratch_begin_vararg(arena, blk->rb_tree_blk->alloc_arena);
+            //Arena::Temp scratch = Arena::scratch_begin({&arena, 1});
+            
             size_t totalChildCount = (a?a->childCount:0)+(b?b->childCount:0)+(c?c->childCount:0);
             assert(!b || !b->isLeaf());
             assert(!c || !c->isLeaf());
