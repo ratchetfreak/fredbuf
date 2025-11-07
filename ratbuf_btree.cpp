@@ -682,7 +682,11 @@ namespace RatchetPieceTree
             assert(!b || b->isLeaf());
             assert(!c || c->isLeaf());
             
-            return remove_from_leafs(arena, blk, to_leaf_node(a), to_leaf_node(b), to_leaf_node(c), at, len);
+            return remove_from_leafs(arena, blk, 
+                to_leaf_node(a), 
+                to_leaf_node(b), 
+                to_leaf_node(c), 
+                at, len);
         }
         else if(c==nullptr && b == nullptr && a->childCount<=3)
         {
@@ -692,9 +696,9 @@ namespace RatchetPieceTree
                     (extend(at, rep(len))) > ina->offsets[1] )
                 return remove_from(arena, blk, 
                     ina->children[0], 
-                    (a->childCount>2)?ina->children[2]:nullptr, 
+                    ina->children[2], 
                     nullptr,
-                    at, retract(len, rep(ina->offsets[1]- ina->offsets[0])));
+                    at, retract(len, rep(ina->offsets[1] - ina->offsets[0])));
             else
                 return remove_from(arena, blk, 
                     ina->children[0], 
